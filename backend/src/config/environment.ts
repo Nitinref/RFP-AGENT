@@ -1,3 +1,4 @@
+// backend/src/config/environment.ts
 import dotenv from 'dotenv';
 import { z } from 'zod';
 import type { SignOptions } from "jsonwebtoken";
@@ -8,17 +9,22 @@ const envSchema = z.object({
   PORT: z.string().default('3000'),
   DATABASE_URL: z.string(),
   
-  // API Keys
-  ANTHROPIC_API_KEY: z.string(),
+  // ✅ OpenAI API Key
+  OPENAI_API_KEY: z.string().optional(),
   
-  // Models
-  PRIMARY_MODEL: z.string().default('claude-sonnet-4-20250514'),
-  FALLBACK_MODEL: z.string().default('claude-3-5-sonnet-20241022'),
+  // ✅ Gemini API Key  
+  GEMINI_API_KEY: z.string().optional(),
+  
+  // ✅ Model Configuration
+  PRIMARY_MODEL_PROVIDER: z.enum(['openai', 'gemini']).default('openai'),
+  PRIMARY_MODEL: z.string().default('gpt-4o'),
+  
+  FALLBACK_MODEL_PROVIDER: z.enum(['openai', 'gemini']).default('gemini'),
+  FALLBACK_MODEL: z.string().default('gemini-1.5-flash'),
   
   // JWT & Auth
   JWT_SECRET: z.string().default('your-secret-key-change-in-production'),
-  
-JWT_EXPIRES_IN: z.custom<SignOptions["expiresIn"]>().default('7d'),
+  JWT_EXPIRES_IN: z.custom<SignOptions["expiresIn"]>().default('7d'),
   
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.string().default('900000'),
@@ -45,13 +51,25 @@ const config = {
   database: {
     url: env.DATABASE_URL,
   },
-  anthropic: {
-    apiKey: env.ANTHROPIC_API_KEY,
+  
+  // ✅ OpenAI Config
+  openai: {
+    apiKey: env.OPENAI_API_KEY || '',
   },
+  
+  // ✅ Gemini Config
+  gemini: {
+    apiKey: env.GEMINI_API_KEY || '',
+  },
+  
+  // ✅ Model Selection
   models: {
+    primaryProvider: env.PRIMARY_MODEL_PROVIDER,
     primary: env.PRIMARY_MODEL,
+    fallbackProvider: env.FALLBACK_MODEL_PROVIDER,
     fallback: env.FALLBACK_MODEL,
   },
+  
   jwt: {
     secret: env.JWT_SECRET,
     expiresIn: env.JWT_EXPIRES_IN,
