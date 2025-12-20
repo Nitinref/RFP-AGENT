@@ -1,0 +1,104 @@
+import { TriggerType } from '@prisma/client';
+export declare class WorkflowOrchestrator {
+    private static instance;
+    private orchestratorAgent;
+    private constructor();
+    static getInstance(): WorkflowOrchestrator;
+    startWorkflow(rfpId: string, triggerType: TriggerType, triggerReason?: string, userId?: string): Promise<{
+        workflowRunId: string;
+        status: "RUNNING";
+        message: string;
+    }>;
+    private executeWorkflow;
+    getWorkflowStatus(workflowRunId: string): Promise<{
+        rfp: {
+            rfpNumber: string;
+            title: string;
+            issuer: string;
+            industry: string;
+            source: import(".prisma/client").$Enums.RFPSource;
+            sourceUrl: string | null;
+            submissionDeadline: Date;
+            clarificationDeadline: Date | null;
+            priority: import(".prisma/client").$Enums.Priority;
+            estimatedValue: import("@prisma/client-runtime-utils").Decimal | null;
+            currency: string | null;
+            region: string | null;
+            tags: string[];
+            id: string;
+            description: string | null;
+            receivedAt: Date;
+            status: import(".prisma/client").$Enums.RFPStatus;
+            originalDocument: string | null;
+            documentHash: string | null;
+            parsedContent: import("@prisma/client/runtime/client.js").JsonValue | null;
+            assignedAt: Date | null;
+            createdAt: Date;
+            updatedAt: Date;
+            assignedToUserId: string | null;
+        };
+        agentActivities: {
+            error: string | null;
+            id: string;
+            status: import(".prisma/client").$Enums.AgentStatus;
+            createdAt: Date;
+            startedAt: Date;
+            completedAt: Date | null;
+            durationMs: number | null;
+            workflowRunId: string;
+            agentType: import(".prisma/client").$Enums.AgentType;
+            action: string;
+            stepNumber: number | null;
+            inputData: import("@prisma/client/runtime/client.js").JsonValue | null;
+            outputData: import("@prisma/client/runtime/client.js").JsonValue | null;
+            modelUsed: string | null;
+            fallbackUsed: boolean;
+            fallbackReason: string | null;
+            tokenUsage: import("@prisma/client/runtime/client.js").JsonValue | null;
+            costEstimate: import("@prisma/client-runtime-utils").Decimal | null;
+            retryCount: number;
+            maxRetries: number;
+        }[];
+        modelDecisions: {
+            id: string;
+            taskType: string | null;
+            workflowRunId: string;
+            agentActivityId: string;
+            primaryModel: string;
+            chosenModel: string;
+            isFallback: boolean;
+            reason: string;
+            decisionFactors: import("@prisma/client/runtime/client.js").JsonValue | null;
+            confidence: number | null;
+            taskComplexity: import(".prisma/client").$Enums.Complexity | null;
+            estimatedTokens: number | null;
+            wasSuccessful: boolean | null;
+            actualTokensUsed: number | null;
+            decidedAt: Date;
+        }[];
+    } & {
+        error: string | null;
+        id: string;
+        status: import(".prisma/client").$Enums.WorkflowStatus;
+        createdAt: Date;
+        updatedAt: Date;
+        startedAt: Date;
+        rfpId: string;
+        runNumber: number;
+        triggerType: import(".prisma/client").$Enums.TriggerType;
+        triggerReason: string | null;
+        totalSteps: number | null;
+        completedSteps: number;
+        failedSteps: number;
+        completedAt: Date | null;
+        durationMs: number | null;
+        createdBy: string | null;
+        canRetry: boolean;
+    }>;
+    retryWorkflow(workflowRunId: string): Promise<{
+        workflowRunId: string;
+        status: "RUNNING";
+        message: string;
+    }>;
+}
+export default WorkflowOrchestrator;

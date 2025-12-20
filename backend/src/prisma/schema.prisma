@@ -1,0 +1,633 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+
+datasource db {
+  provider = "postgresql"
+}
+model RFP {
+  id                String            @id @default(cuid())
+  rfpNumber         String            @unique
+  title             String
+  description       String?           @db.Text
+  issuer            String
+  industry          String
+  source            RFPSource
+  sourceUrl         String?
+  
+  // Dates & Deadlines
+  receivedAt        DateTime          @default(now())
+  submissionDeadline DateTime
+  clarificationDeadline DateTime?
+  
+  // Priority & Status
+  priority          Priority          @default(MEDIUM)
+  status            RFPStatus         @default(NEW)
+  
+  // Document Management
+  originalDocument  String?           // File path or URL
+  documentHash      String?           // For duplicate detection
+  parsedContent     Json?             // Extracted text and structure
+  
+  // Metadata
+  estimatedValue    Decimal?          @db.Decimal(15, 2)
+  currency          String?           @default("USD")
+  region            String?
+  tags              String[]
+  
+  // Agent Assignment
+  assignedToUserId  String?
+  assignedAt        DateTime?
+  
+  // Timestamps
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Relations
+  assignedTo        User?             @relation(fields: [assignedToUserId], references: [id])
+  requirements      RFPRequirement[]
+  workflowRuns      WorkflowRun[]
+  technicalAnalyses TechnicalAnalysis[]
+  pricingAnalyses   PricingAnalysis[]
+  responses         RFPResponse[]
+  documentChunks    RFPDocumentChunk[]
+  
+  @@index([status, priority])
+  @@index([submissionDeadline])
+  @@index([industry])
+  @@index([receivedAt])
+}
+
+model RFPRequirement {
+  id              String   @id @default(cuid())
+  rfpId           String
+  rfp             RFP      @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  category        RequirementCategory
+  section         String
+  requirement     String   @db.Text
+  specification   String?  @db.Text
+  isMandatory     Boolean  @default(true)
+  priority        Int      @default(1)
+  
+  // Technical Details
+  quantity        Int?
+  unit            String?
+  technicalParams Json?    // Flexible storage for specs
+  
+  // Matching
+  matched         Boolean  @default(false)
+  matchedSKUId    String?
+  matchScore      Float?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  matchedSKU      ProductSKU? @relation(fields: [matchedSKUId], references: [id])
+  
+  @@index([rfpId, category])
+  @@index([isMandatory])
+}
+
+// ════════════════════════════════════════════════════════
+// WORKFLOW ORCHESTRATION
+// ════════════════════════════════════════════════════════
+
+model WorkflowRun {
+  id              String          @id @default(cuid())
+  rfpId           String
+  rfp             RFP             @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  runNumber       Int             // Sequential run number per RFP
+  triggerType     TriggerType
+  triggerReason   String?         @db.Text
+  
+  status          WorkflowStatus  @default(RUNNING)
+  
+  // Orchestration Metadata
+  totalSteps      Int?
+  completedSteps  Int             @default(0)
+  failedSteps     Int             @default(0)
+  
+  // Timing
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  durationMs      Int?
+  
+  // User Context
+  createdBy       String?
+  createdByUser   User?           @relation(fields: [createdBy], references: [id])
+  
+  // Error Handling
+  error           String?         @db.Text
+  canRetry        Boolean         @default(true)
+  
+  // Relations
+  agentActivities AgentActivity[]
+  modelDecisions  ModelDecision[]
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  @@unique([rfpId, runNumber])
+  @@index([rfpId, status])
+  @@index([triggerType])
+  @@index([startedAt])
+}
+
+model RFPDocumentChunk {
+  id          String   @id @default(cuid())
+  rfpId       String
+  rfp         RFP      @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  chunkIndex  Int      // Order within document
+  section     String?  // e.g., "Technical Requirements", "Scope of Work"
+  sectionType RequirementCategory?
+  
+  content     String   @db.Text
+  wordCount   Int?
+  
+  // Vector Search Support
+  embedding   Json?    // Store vector embedding for RAG
+  embeddingModel String? // e.g., "text-embedding-3-small"
+  
+  // Metadata for retrieval
+  pageNumber  Int?
+  isTable     Boolean  @default(false)
+  importance  Float?   // 0-1 score for relevance
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([rfpId, chunkIndex])
+  @@index([rfpId, sectionType])
+  @@index([section])
+}
+
+// ════════════════════════════════════════════════════════
+// PRODUCT CATALOG
+// ════════════════════════════════════════════════════════
+
+model ProductSKU {
+  id              String   @id @default(cuid())
+  sku             String   @unique
+  name            String
+  description     String?  @db.Text
+  category        String
+  subcategory     String?
+  
+  // Technical Specifications
+  specifications  Json     // Structured technical data
+  datasheet       String?  // File path or URL
+  certifications  String[]
+  standards       String[]
+  
+  // Availability
+  isActive        Boolean  @default(true)
+  leadTimeDays    Int?
+  moq             Int?     // Minimum Order Quantity
+  
+  // Pricing
+  basePrice       Decimal  @db.Decimal(12, 2)
+  currency        String   @default("USD")
+  priceValidUntil DateTime?
+  
+  // Metadata
+  manufacturer    String?
+  manufacturerPN  String?  // Part Number
+  tags            String[]
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  pricingTiers    PricingTier[]
+  requirements    RFPRequirement[]
+  matchedAnalyses SKUMatch[]
+  responseItems   RFPResponseItem[]
+  
+  @@index([category, isActive])
+  @@index([sku])
+}
+
+model PricingTier {
+  id          String     @id @default(cuid())
+  skuId       String
+  sku         ProductSKU @relation(fields: [skuId], references: [id], onDelete: Cascade)
+  
+  minQuantity Int
+  maxQuantity Int?
+  unitPrice   Decimal    @db.Decimal(12, 2)
+  discount    Decimal?   @db.Decimal(5, 2) // Percentage
+  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  @@index([skuId])
+}
+
+// ════════════════════════════════════════════════════════
+// MULTI-AGENT SYSTEM
+// ════════════════════════════════════════════════════════
+
+model AgentActivity {
+  id              String         @id @default(cuid())
+  workflowRunId   String
+  workflowRun     WorkflowRun    @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  
+  agentType       AgentType
+  action          String
+  status          AgentStatus    @default(IN_PROGRESS)
+  stepNumber      Int?           // Order in workflow
+  
+  // Input/Output
+  inputData       Json?
+  outputData      Json?
+  
+  // Model Information
+  modelUsed       String?        // e.g., "claude-sonnet-4"
+  fallbackUsed    Boolean        @default(false)
+  fallbackReason  String?
+  
+  // Performance Metrics
+  startedAt       DateTime       @default(now())
+  completedAt     DateTime?
+  durationMs      Int?
+  tokenUsage      Json?          // {input: x, output: y, total: z}
+  costEstimate    Decimal?       @db.Decimal(10, 6)
+  
+  // Error Handling
+  error           String?        @db.Text
+  retryCount      Int            @default(0)
+  maxRetries      Int            @default(3)
+  
+  // Relations
+  modelDecisions  ModelDecision[]
+  
+  createdAt       DateTime       @default(now())
+  
+  @@index([workflowRunId, stepNumber])
+  @@index([agentType, status])
+  @@index([startedAt])
+}
+
+model ModelDecision {
+  id                String         @id @default(cuid())
+  workflowRunId     String
+  workflowRun       WorkflowRun    @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  
+  agentActivityId   String
+  agentActivity     AgentActivity  @relation(fields: [agentActivityId], references: [id], onDelete: Cascade)
+  
+  // Model Selection
+  primaryModel      String         // e.g., "claude-sonnet-4"
+  chosenModel       String         // Actual model used
+  isFallback        Boolean        @default(false)
+  
+  // Decision Logic
+  reason            String         @db.Text
+  decisionFactors   Json?          // {complexity: HIGH, cost: MEDIUM, reliability: HIGH}
+  confidence        Float?         // 0-1 confidence in model choice
+  
+  // Task Context
+  taskType          String?        // e.g., "technical_analysis", "pricing"
+  taskComplexity    Complexity?
+  estimatedTokens   Int?
+  
+  // Outcome
+  wasSuccessful     Boolean?
+  actualTokensUsed  Int?
+  
+  decidedAt         DateTime       @default(now())
+  
+  @@index([workflowRunId])
+  @@index([agentActivityId])
+  @@index([chosenModel])
+}
+
+// ════════════════════════════════════════════════════════
+// TECHNICAL ANALYSIS
+// ════════════════════════════════════════════════════════
+
+model TechnicalAnalysis {
+  id                  String            @id @default(cuid())
+  rfpId               String
+  rfp                 RFP               @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  analysisVersion     Int               @default(1)
+  status              AnalysisStatus    @default(IN_PROGRESS)
+  
+  // Analysis Results
+  overallCompliance   Float?            // Percentage
+  criticalGaps        String[]
+  recommendations     Json?
+  
+  // Agent Metadata
+  agentActivityId     String?
+  modelUsed           String?
+  confidence          Float?            // 0-1
+  
+  createdAt           DateTime          @default(now())
+  completedAt         DateTime?
+  
+  // Relations
+  skuMatches          SKUMatch[]
+  
+  @@index([rfpId, analysisVersion])
+  @@index([agentActivityId])
+}
+
+model SKUMatch {
+  id                  String            @id @default(cuid())
+  technicalAnalysisId String
+  analysis            TechnicalAnalysis @relation(fields: [technicalAnalysisId], references: [id], onDelete: Cascade)
+  
+  skuId               String
+  sku                 ProductSKU        @relation(fields: [skuId], references: [id])
+  
+  // Matching Scores
+  overallMatchScore   Float             // 0-100
+  specMatchScore      Float
+  certificationMatch  Float?
+  availabilityScore   Float?
+  
+  // Analysis
+  rank                Int
+  complianceDetails   Json              // Detailed breakdown
+  gaps                String[]
+  risks               String[]
+  justification       String            @db.Text
+  
+  // Recommendation
+  isRecommended       Boolean           @default(false)
+  confidence          Float             // 0-1
+  
+  createdAt           DateTime          @default(now())
+  
+  @@index([technicalAnalysisId, rank])
+  @@index([skuId])
+}
+
+// ════════════════════════════════════════════════════════
+// PRICING ANALYSIS
+// ════════════════════════════════════════════════════════
+
+model PricingAnalysis {
+  id              String         @id @default(cuid())
+  rfpId           String
+  rfp             RFP            @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  analysisVersion Int            @default(1)
+  status          AnalysisStatus @default(IN_PROGRESS)
+  
+  // Pricing Summary
+  totalBidPrice   Decimal        @db.Decimal(15, 2)
+  currency        String         @default("USD")
+  validUntil      DateTime?
+  
+  // Cost Breakdown
+  productsCost    Decimal        @db.Decimal(15, 2)
+  testingCost     Decimal?       @db.Decimal(15, 2)
+  logisticsCost   Decimal?       @db.Decimal(15, 2)
+  complianceCost  Decimal?       @db.Decimal(15, 2)
+  contingency     Decimal?       @db.Decimal(15, 2)
+  
+  // Margin & Risk
+  targetMargin    Decimal?       @db.Decimal(5, 2) // Percentage
+  riskAdjustment  Decimal?       @db.Decimal(5, 2)
+  competitiveness String?        // HIGH/MEDIUM/LOW
+  
+  // Assumptions & Risks
+  assumptions     String[]
+  pricingRisks    String[]
+  notes           String?        @db.Text
+  
+  // Agent Metadata
+  agentActivityId String?
+  modelUsed       String?
+  confidence      Float?         // 0-1
+  
+  createdAt       DateTime       @default(now())
+  completedAt     DateTime?
+  
+  @@index([rfpId, analysisVersion])
+  @@index([agentActivityId])
+}
+
+// ════════════════════════════════════════════════════════
+// RFP RESPONSE & SUBMISSION
+// ════════════════════════════════════════════════════════
+
+model RFPResponse {
+  id                String            @id @default(cuid())
+  rfpId             String
+  rfp               RFP               @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  
+  version           Int               @default(1)
+  status            ResponseStatus    @default(DRAFT)
+  
+  // Executive Summary
+  executiveSummary  String?           @db.Text
+  complianceStatement String?         @db.Text
+  
+  // Commercial Terms
+  totalPrice        Decimal           @db.Decimal(15, 2)
+  currency          String            @default("USD")
+  validityPeriod    Int?              // Days
+  paymentTerms      String?
+  deliveryTimeline  String?
+  
+  // Documents
+  responseDocument  String?           // Generated file path
+  attachments       String[]
+  
+  // Approval Workflow
+  reviewedBy        String?
+  reviewedAt        DateTime?
+  approvedBy        String?
+  approvedAt        DateTime?
+  
+  // Submission
+  submittedAt       DateTime?
+  submittedBy       String?
+  submissionMethod  String?
+  
+  // Outcome
+  outcome           ResponseOutcome?
+  outcomeNotes      String?           @db.Text
+  
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Relations
+  items             RFPResponseItem[]
+  
+  @@index([rfpId, version])
+  @@index([status])
+}
+
+model RFPResponseItem {
+  id              String      @id @default(cuid())
+  responseId      String
+  response        RFPResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  
+  skuId           String
+  sku             ProductSKU  @relation(fields: [skuId], references: [id])
+  
+  lineNumber      Int
+  description     String
+  quantity        Int
+  unitPrice       Decimal     @db.Decimal(12, 2)
+  totalPrice      Decimal     @db.Decimal(15, 2)
+  
+  // Compliance
+  complianceNotes String?     @db.Text
+  certifications  String[]
+  
+  // Delivery
+  leadTimeDays    Int?
+  deliveryTerms   String?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  @@index([responseId, lineNumber])
+  @@index([skuId])
+}
+
+// ════════════════════════════════════════════════════════
+// USER & ACCESS MANAGEMENT
+// ════════════════════════════════════════════════════════
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String?  // ✅ ADD THIS LINE
+  role      UserRole @default(USER)
+  department String?
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  // Relations
+  assignedRFPs   RFP[]
+  workflowRuns   WorkflowRun[]
+  
+  @@index([email])
+  @@index([role, isActive])
+}
+// ════════════════════════════════════════════════════════
+// ENUMS
+// ════════════════════════════════════════════════════════
+
+enum RFPSource {
+  EMAIL
+  PORTAL
+  UPLOAD
+  API
+  MANUAL
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RFPStatus {
+  NEW
+  ANALYZING
+  IN_PROGRESS
+  REVIEW
+  APPROVED
+  SUBMITTED
+  AWARDED
+  LOST
+  CANCELLED
+}
+
+enum RequirementCategory {
+  TECHNICAL
+  COMMERCIAL
+  TESTING
+  COMPLIANCE
+  LOGISTICS
+  DOCUMENTATION
+  OTHER
+}
+
+enum AgentType {
+  SALES_SCOUT
+  ORCHESTRATOR
+  TECHNICAL_SPECIALIST
+  PRICING_SPECIALIST
+}
+
+enum AgentStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  RETRYING
+}
+
+enum AnalysisStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum ResponseStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  SUBMITTED
+  ARCHIVED
+}
+
+enum ResponseOutcome {
+  PENDING
+  WON
+  LOST
+  NO_BID
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  SALES
+  TECHNICAL
+  PRICING
+  USER
+}
+
+enum TriggerType {
+  AUTO_SCAN
+  MANUAL
+  RETRY
+  SCHEDULED
+  API
+}
+
+enum WorkflowStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  PAUSED
+}
+
+enum Complexity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
