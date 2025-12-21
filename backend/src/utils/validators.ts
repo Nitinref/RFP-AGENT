@@ -2,52 +2,164 @@ import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { ValidationError } from './errors.js';
 
+// Define the schema
 const rfpCreateSchema = z.object({
-  rfpNumber: z.string().min(1),
-  title: z.string().min(1),
-  issuer: z.string().min(1),
-  industry: z.string().min(1),
+  rfpNumber: z.string().min(1, { message: "RFP number is required" }),
+  title: z.string().min(1, { message: "Title is required" }),
+  issuer: z.string().min(1, { message: "Issuer is required" }),
+  industry: z.string().min(1, { message: "Industry is required" }),
   source: z.enum(['EMAIL', 'PORTAL', 'UPLOAD', 'API', 'MANUAL']),
-  sourceUrl: z.string().url().optional(),
-  submissionDeadline: z.string().datetime(),
-  clarificationDeadline: z.string().datetime().optional(),
-  priority: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional(),
-  estimatedValue: z.number().optional(),
-  currency: z.string().optional(),
+  sourceUrl: z.string().url({ message: "Invalid URL format" }).optional().or(z.literal('')),
+  submissionDeadline: z.string().datetime({ 
+    message: "Invalid date format. Use ISO format like: 2024-12-31T23:59:59.000Z" 
+  }),
+  clarificationDeadline: z.string().datetime({ 
+    message: "Invalid clarification date format" 
+  }).optional().or(z.literal('')),
+  priority: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional().default('MEDIUM'),
+  estimatedValue: z.number().min(0, { message: "Estimated value must be positive" }).optional(),
+  currency: z.string().length(3, { message: "Currency must be 3 characters (e.g., USD)" }).optional().default('USD'),
   region: z.string().optional(),
-  tags: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional().default([]),
+  description: z.string().optional(),
+  requirements: z.string().optional(),
 });
 
+// Type for the validated data
+export type RFPCreateInput = z.infer<typeof rfpCreateSchema>;
+
+// Main validation middleware
 export const validateRFPCreate = (
   req: Request,
   res: Response,
   next: NextFunction
-) => {
+): void => {
   try {
-    rfpCreateSchema.parse(req.body);
+    // Parse and validate the request body
+    const validatedData = rfpCreateSchema.parse(req.body);
+    
+    // Store validated data in request object for later use
+    (req as any).validatedBody = validatedData;
+    
+    // Continue to next middleware/controller
     next();
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-        // @ts-ignore
-      next(new ValidationError(error.errors[0].message));
-    } else {
-      next(error);
-    }
+  } catch (error: unknown) {
+    handleValidationError(error, next);
   }
 };
 
-export interface RFPCreateInput {
-  rfpNumber: string;
-  title: string;
-  issuer: string;
-  industry: string;
-  source: 'EMAIL' | 'PORTAL' | 'UPLOAD' | 'API' | 'MANUAL';
-  sourceUrl?: string;
-  submissionDeadline: string;
-  clarificationDeadline?: string;
-  priority?: 'HIGH' | 'MEDIUM' | 'LOW';
-  estimatedValue?: number;
-  currency?: string;
-  region?: string;
-  tags?: string[];
+// Error handling function
+const handleValidationError = (error: unknown, next: NextFunction): void => {
+  if (error instanceof z.ZodError) {
+    // Get the first validation error
+    const firstError = getFirstValidationError(error);
+    
+    if (firstError) {
+      next(new ValidationError(firstError));
+    } else {
+      next(new ValidationError('Validation failed: Invalid data format'));
+    }
+  } else if (error instanceof Error) {
+    // Handle other Error types
+    next(new ValidationError(error.message));
+  } else {
+    // Handle unknown error types
+    next(new ValidationError('An unknown validation error occurred'));
+  }
+};
+
+// Helper to extract first error message
+const getFirstValidationError = (zodError: z.ZodError): string | null => {
+       // @ts-ignore
+  if (zodError.errors && zodError.errors.length > 0) {
+       // @ts-ignore
+    const firstError = zodError.errors[0];
+    
+    // Build a user-friendly error message
+    const field = firstError.path.length > 0 
+      ? `Field "${firstError.path.join('.')}"` 
+      : 'Field';
+    
+    return `${field}: ${firstError.message}`;
+  }
+  
+  return null;
+};
+
+// Helper function to prepare RFP data from frontend
+export const prepareRFPData = (data: Partial<RFPCreateInput>): RFPCreateInput => {
+  const now = new Date();
+  const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  
+  return {
+    rfpNumber: data.rfpNumber || `RFP-${now.getTime()}`,
+    title: data.title || '',
+    issuer: data.issuer || '',
+    industry: data.industry || 'Other',
+    source: data.source || 'MANUAL',
+    sourceUrl: data.sourceUrl || '',
+    submissionDeadline: data.submissionDeadline || thirtyDaysLater.toISOString(),
+    clarificationDeadline: data.clarificationDeadline || '',
+    priority: data.priority || 'MEDIUM',
+    estimatedValue: data.estimatedValue,
+    currency: data.currency || 'USD',
+    region: data.region || '',
+    tags: Array.isArray(data.tags) ? data.tags : (data.tags ? [data.tags] : []),
+    description: data.description || '',
+    requirements: data.requirements || '',
+  };
+};
+
+// Sample data for testing
+export const sampleRFPCreateData: RFPCreateInput = {
+  rfpNumber: 'RFP-2024-001',
+  title: 'Industrial Automation System Upgrade',
+  issuer: 'ACME Manufacturing Corporation',
+  industry: 'Manufacturing',
+  source: 'MANUAL',
+  sourceUrl: '',
+  submissionDeadline: '2024-12-31T23:59:59.000Z',
+  clarificationDeadline: '2024-12-15T23:59:59.000Z',
+  priority: 'MEDIUM',
+  estimatedValue: 500000,
+  currency: 'USD',
+  region: 'North America',
+  tags: ['automation', 'sensors', 'plc', 'manufacturing'],
+  description: 'Upgrade of industrial automation system with new sensors, PLC controllers, and HMI panels for improved efficiency and monitoring.',
+  requirements: 'Temperature sensors (-40°C to 125°C range), PLC controllers with 24+ I/O, HMI touchscreen panels (10" minimum), and integration with existing SCADA system.'
+};
+
+// Validation result type
+export interface ValidationResult {
+  isValid: boolean;
+  errors: string[];
+  validatedData?: RFPCreateInput;
 }
+
+// Alternative synchronous validation function
+export const validateRFPDataSync = (data: any): ValidationResult => {
+  try {
+    const validatedData = rfpCreateSchema.parse(data);
+    return {
+      isValid: true,
+      errors: [],
+      validatedData
+    };
+  } catch (error: unknown) {
+    if (error instanceof z.ZodError) {
+        // @ts-ignore
+      const errors = error.errors.map((err: { path: any[]; message: any; }) => 
+        `${err.path.join('.')}: ${err.message}`
+      );
+      return {
+        isValid: false,
+        errors
+      };
+    }
+    
+    return {
+      isValid: false,
+      errors: ['Unknown validation error']
+    };
+  }
+};

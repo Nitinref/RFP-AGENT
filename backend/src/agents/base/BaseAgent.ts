@@ -14,10 +14,18 @@ export abstract class BaseAgent {
     this.modelService = ModelService.getInstance();
   }
 
+  // 🔥 GLOBAL JSON CLEANER (fixes ```json issues everywhere)
+  protected cleanJsonResponse(raw: string): string {
+    if (!raw) return raw;
+
+    return raw
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+  }
+
   async execute(input: AgentInput): Promise<AgentOutput> {
     const startTime = Date.now();
-
-    // ✅ MUST be nullable
     let agentActivity: AgentActivity | null = null;
 
     try {
@@ -42,7 +50,7 @@ export abstract class BaseAgent {
       const durationMs = Date.now() - startTime;
 
       // ─────────────────────────────────────────────
-      // Mark agent as completed
+      // Mark agent completed
       // ─────────────────────────────────────────────
       await prisma.agentActivity.update({
         where: { id: agentActivity.id },
@@ -65,12 +73,13 @@ export abstract class BaseAgent {
       const errorMessage = (error as Error).message;
 
       logger.error(`Agent ${this.agentType} failed`, {
-        error: errorMessage,
+        message: errorMessage,
+        stack: (error as Error).stack,
         agentType: this.agentType,
         workflowRunId: input.context.workflowRunId,
       });
 
-      // ✅ GUARDED — TS & runtime safe
+      // If activity creation failed
       if (!agentActivity) {
         return {
           success: false,
@@ -100,16 +109,14 @@ export abstract class BaseAgent {
       // Retry with exponential backoff
       // ─────────────────────────────────────────────
       if (canRetry) {
+        const retryDelay = Math.pow(2, agentActivity.retryCount) * 1000;
+
         logger.info(`Retrying agent ${this.agentType}`, {
           retryCount: agentActivity.retryCount + 1,
+          delayMs: retryDelay,
         });
 
-        const retryCount = agentActivity.retryCount;
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.pow(2, retryCount) * 1000)
-        );
-
+        await new Promise((res) => setTimeout(res, retryDelay));
         return this.execute(input);
       }
 
@@ -120,6 +127,7 @@ export abstract class BaseAgent {
     }
   }
 
+  // 🔥 ALL agents automatically get clean JSON now
   protected async executeModel(
     prompt: string,
     taskType: string,
@@ -130,7 +138,7 @@ export abstract class BaseAgent {
     workflowRunId?: string,
     agentActivityId?: string
   ): Promise<string> {
-    return this.modelService.execute({
+    const raw = await this.modelService.execute({
       prompt,
       taskType,
       complexity,
@@ -140,6 +148,8 @@ export abstract class BaseAgent {
       workflowRunId,
       agentActivityId,
     });
+
+    return this.cleanJsonResponse(raw);
   }
 
   protected abstract run(input: AgentInput): Promise<AgentOutput>;

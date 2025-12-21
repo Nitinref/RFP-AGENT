@@ -10,20 +10,18 @@ export interface User {
 }
 
 export interface RFP {
-    workflowActive: any;
-    aiStatus: any;
     id: string;
     rfpNumber: string;
     title: string;
     issuer: string;
     industry: string;
-    source: 'MANUAL' | 'EMAIL' | 'PORTAL';
+    source: 'MANUAL' | 'EMAIL' | 'PORTAL' | 'UPLOAD' | 'API';
     submissionDeadline: string;
     priority: 'HIGH' | 'MEDIUM' | 'LOW';
     estimatedValue?: number;
     currency: string;
     description?: string;
-    status: 'NEW' | 'ANALYZING' | 'IN_PROGRESS' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED';
+    status: 'NEW' | 'ANALYZING' | 'IN_PROGRESS' | 'REVIEW' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED';
     region?: string;
     tags: string[];
     createdAt: string;
@@ -41,25 +39,32 @@ export interface Workflow {
     completedAt?: string;
     durationMs?: number;
     error?: string;
+    agentActivities?: any[];
+    modelDecisions?: any[];
 }
 
 export interface TechnicalAnalysis {
+    id: string;
     overallCompliance: number;
-    skuMatches: Array<{
+    confidence: number;
+    status: string;
+    criticalGaps: string[];
+    skuMatches?: Array<{
         id: string;
-        productName: string;
-        matchScore: number;
+        skuId: string;
         overallMatchScore: number;
         justification: string;
     }>;
 }
 
 export interface PricingAnalysis {
+    id: string;
     totalBidPrice: string;
     productsCost: string;
     testingCost?: string;
-    markupPercentage: number;
-    profit: string;
+    logisticsCost?: string;
+    contingency?: string;
+    competitiveness: string;
 }
 
 export interface AnalyticsData {
@@ -76,9 +81,6 @@ export interface AnalyticsData {
 }
 
 export interface ApiResponse<T> {
-    overallCompliance: undefined;
-    totalBidPrice: any;
-    id: ApiResponse<any>;
     success: boolean;
     data?: T;
     error?: string;
@@ -90,22 +92,10 @@ export interface LoginResponse {
     token: string;
     user: User;
 }
-
 export interface RegisterRequest {
     email: string;
     password: string;
     name: string;
-    role?: string;
+    role?: 'ADMIN' | 'MANAGER' | 'USER';
     department?: string;
 }
-
-// REMOVE THESE DUPLICATES - They're already defined above
-// export interface Workflow { ... } // DUPLICATE - REMOVE
-// export interface ApiWorkflowResponse { ... } // You don't need this if using ApiResponse<T>
-
-// Instead, use ApiResponse<T> for all API responses
-export type ApiWorkflowResponse = ApiResponse<Workflow>;
-export type ApiTechnicalAnalysisResponse = ApiResponse<TechnicalAnalysis>;
-export type ApiPricingAnalysisResponse = ApiResponse<PricingAnalysis>;
-export type ApiRFPResponse = ApiResponse<RFP>;
-export type ApiRFPsResponse = ApiResponse<RFP[]>;

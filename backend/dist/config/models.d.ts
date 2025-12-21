@@ -1,15 +1,43 @@
-import config from './environment.js';
 export declare const MODEL_CONFIGS: {
-    [config.models.primary]: {
+    'gpt-4o': {
         name: string;
+        provider: string;
         maxTokens: number;
         contextWindow: number;
         costPer1kInput: number;
         costPer1kOutput: number;
         useCase: string[];
     };
-    [config.models.fallback]: {
+    'gpt-4o-mini': {
         name: string;
+        provider: string;
+        maxTokens: number;
+        contextWindow: number;
+        costPer1kInput: number;
+        costPer1kOutput: number;
+        useCase: string[];
+    };
+    'gemini-2.5-pro': {
+        name: string;
+        provider: string;
+        maxTokens: number;
+        contextWindow: number;
+        costPer1kInput: number;
+        costPer1kOutput: number;
+        useCase: string[];
+    };
+    'gemini-2.5-flash': {
+        name: string;
+        provider: string;
+        maxTokens: number;
+        contextWindow: number;
+        costPer1kInput: number;
+        costPer1kOutput: number;
+        useCase: string[];
+    };
+    'gemini-3-flash-preview': {
+        name: string;
+        provider: string;
         maxTokens: number;
         contextWindow: number;
         costPer1kInput: number;

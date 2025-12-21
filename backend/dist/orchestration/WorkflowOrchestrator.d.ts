@@ -25,8 +25,8 @@ export declare class WorkflowOrchestrator {
             currency: string | null;
             region: string | null;
             tags: string[];
-            id: string;
             description: string | null;
+            id: string;
             receivedAt: Date;
             status: import(".prisma/client").$Enums.RFPStatus;
             originalDocument: string | null;
@@ -46,6 +46,7 @@ export declare class WorkflowOrchestrator {
             completedAt: Date | null;
             durationMs: number | null;
             workflowRunId: string;
+            tokenUsage: import("@prisma/client/runtime/client.js").JsonValue | null;
             agentType: import(".prisma/client").$Enums.AgentType;
             action: string;
             stepNumber: number | null;
@@ -54,7 +55,6 @@ export declare class WorkflowOrchestrator {
             modelUsed: string | null;
             fallbackUsed: boolean;
             fallbackReason: string | null;
-            tokenUsage: import("@prisma/client/runtime/client.js").JsonValue | null;
             costEstimate: import("@prisma/client-runtime-utils").Decimal | null;
             retryCount: number;
             maxRetries: number;

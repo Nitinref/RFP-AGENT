@@ -21,7 +21,8 @@ app.use(cors({
     origin: ['http://localhost:3001', 'http://localhost:3000'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+    exposedHeaders: ['Authorization'], // Expose Authorization header
 }));
 app.use(compression());
 // Rate limiting

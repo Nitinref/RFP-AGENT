@@ -4,11 +4,16 @@ declare const config: {
     database: {
         url: string;
     };
-    anthropic: {
+    openai: {
+        apiKey: string;
+    };
+    gemini: {
         apiKey: string;
     };
     models: {
+        primaryProvider: "openai" | "gemini";
         primary: string;
+        fallbackProvider: "openai" | "gemini";
         fallback: string;
     };
     jwt: {

@@ -1,4 +1,4 @@
-import { AgentType, Complexity, WorkflowStatus } from '@prisma/client';
+import { AgentType, Complexity } from '@prisma/client';
 import BaseAgent from './base/BaseAgent.js';
 import { AgentInput, AgentOutput } from '../types/agents.types.js';
 import SalesAgent from './SalesAgent.js';
@@ -26,33 +26,52 @@ export class OrchestratorAgent extends BaseAgent {
     });
 
     try {
+      // ─────────────────────────────────────────────
       // Step 1: Sales Triage
+      // ─────────────────────────────────────────────
       const salesResult = await this.executeSalesAgent(input);
       if (!salesResult.success) {
         throw new Error('Sales Agent failed: ' + salesResult.error);
       }
 
-      // Step 2: Technical Analysis (parallel execution possible)
+      // ─────────────────────────────────────────────
+      // Step 2: Technical Analysis
+      // ─────────────────────────────────────────────
       const technicalResult = await this.executeTechnicalAgent(input);
       if (!technicalResult.success) {
         throw new Error('Technical Agent failed: ' + technicalResult.error);
       }
 
+      // 🛑 HARD BUSINESS STOP: No SKU matches → STOP workflow
+      if (
+        !technicalResult.data?.topMatches ||
+        technicalResult.data.topMatches.length === 0
+      ) {
+        throw new Error(
+          'Workflow stopped: No suitable SKUs found for this RFP'
+        );
+      }
+
+      // ─────────────────────────────────────────────
       // Step 3: Pricing Analysis
-      const pricingInput = {
+      // ─────────────────────────────────────────────
+      const pricingInput: AgentInput = {
         ...input,
         context: { ...input.context, stepNumber: 3 },
         data: {
-          //@ts-ignore
+          ...input.data,
           skuMatches: technicalResult.data.topMatches,
         },
       };
+
       const pricingResult = await this.executePricingAgent(pricingInput);
       if (!pricingResult.success) {
         throw new Error('Pricing Agent failed: ' + pricingResult.error);
       }
 
+      // ─────────────────────────────────────────────
       // Step 4: Generate Final Response
+      // ─────────────────────────────────────────────
       const finalResponse = await this.generateFinalResponse(
         input.context.rfpId,
         salesResult.data,
@@ -76,13 +95,21 @@ export class OrchestratorAgent extends BaseAgent {
         },
       };
     } catch (error) {
-      logger.error('Orchestrator Agent execution failed', { error });
+      logger.error('Orchestrator Agent execution failed', {
+        message: (error as Error).message,
+        stack: (error as Error).stack,
+      });
+
       return {
         success: false,
         error: (error as Error).message,
       };
     }
   }
+
+  // ─────────────────────────────────────────────
+  // Agent Execution Helpers
+  // ─────────────────────────────────────────────
 
   private async executeSalesAgent(input: AgentInput): Promise<AgentOutput> {
     return this.salesAgent.execute({
@@ -95,13 +122,19 @@ export class OrchestratorAgent extends BaseAgent {
     return this.technicalAgent.execute({
       ...input,
       context: { ...input.context, stepNumber: 2 },
-      data: {},
+      data: {
+        ...input.data, // ✅ DO NOT wipe data
+      },
     });
   }
 
   private async executePricingAgent(input: AgentInput): Promise<AgentOutput> {
     return this.pricingAgent.execute(input);
   }
+
+  // ─────────────────────────────────────────────
+  // Final Response Generation
+  // ─────────────────────────────────────────────
 
   private async generateFinalResponse(
     rfpId: string,
@@ -136,75 +169,45 @@ ${JSON.stringify(technicalData, null, 2)}
 PRICING ANALYSIS:
 ${JSON.stringify(pricingData, null, 2)}
 
-Generate a comprehensive response with:
-1. Executive Summary (2-3 paragraphs)
-2. Compliance Statement
-3. Delivery Timeline
-4. Payment Terms
-
 Return ONLY valid JSON:
 {
   "executiveSummary": "string",
   "complianceStatement": "string",
   "deliveryTimeline": "string",
   "paymentTerms": "string",
-  "validityPeriod": number (days),
+  "validityPeriod": number,
   "keyHighlights": ["highlight1", "highlight2"]
 }
 `;
 
-    const systemPrompt = `You are an expert B2B proposal writer with deep RFP experience. Write professionally and persuasively.`;
+    const result = await this.executeModel(
+      prompt,
+      'response_generation',
+      Complexity.HIGH,
+      'You are an expert B2B proposal writer.',
+      0.4,
+      2048,
+      workflowRunId
+    );
 
-    try {
-      const result = await this.executeModel(
-        prompt,
-        'response_generation',
-        Complexity.HIGH,
-        systemPrompt,
-        0.4,
-        2048,
-        workflowRunId
-      );
+    const parsed = JSON.parse(result);
 
-      const parsed = JSON.parse(result);
+    const response = await prisma.rFPResponse.create({
+      data: {
+        rfpId,
+        version: 1,
+        status: 'DRAFT',
+        executiveSummary: parsed.executiveSummary,
+        complianceStatement: parsed.complianceStatement,
+        totalPrice: pricingData.pricing.totalBidPrice,
+        currency: 'USD',
+        validityPeriod: parsed.validityPeriod,
+        paymentTerms: parsed.paymentTerms,
+        deliveryTimeline: parsed.deliveryTimeline,
+      },
+    });
 
-      const response = await prisma.rFPResponse.create({
-        data: {
-          rfpId,
-          version: 1,
-          status: 'DRAFT',
-          executiveSummary: parsed.executiveSummary,
-          complianceStatement: parsed.complianceStatement,
-          totalPrice: pricingData.pricing.totalBidPrice,
-          currency: 'USD',
-          validityPeriod: parsed.validityPeriod,
-          paymentTerms: parsed.paymentTerms,
-          deliveryTimeline: parsed.deliveryTimeline,
-        },
-      });
-
-      // Create response items from top matches
-      for (const match of technicalData.topMatches.slice(0, 3)) {
-        await prisma.rFPResponseItem.create({
-          data: {
-            responseId: response.id,
-            skuId: match.skuId,
-            lineNumber: technicalData.topMatches.indexOf(match) + 1,
-            description: match.sku,
-            quantity: 1,
-            unitPrice: pricingData.pricing.productsCost / technicalData.topMatches.length,
-            totalPrice: pricingData.pricing.productsCost / technicalData.topMatches.length,
-            complianceNotes: match.justification,
-            certifications: match.complianceDetails.certifications || [],
-          },
-        });
-      }
-
-      return response;
-    } catch (error) {
-      logger.error('Response generation failed', { error });
-      throw error;
-    }
+    return response;
   }
 }
 

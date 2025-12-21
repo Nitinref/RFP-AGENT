@@ -15,8 +15,8 @@ export declare class RFPService {
         currency: string | null;
         region: string | null;
         tags: string[];
-        id: string;
         description: string | null;
+        id: string;
         receivedAt: Date;
         status: import(".prisma/client").$Enums.RFPStatus;
         originalDocument: string | null;
@@ -68,8 +68,8 @@ export declare class RFPService {
             currency: string | null;
             region: string | null;
             tags: string[];
-            id: string;
             description: string | null;
+            id: string;
             receivedAt: Date;
             status: import(".prisma/client").$Enums.RFPStatus;
             originalDocument: string | null;
@@ -181,8 +181,8 @@ export declare class RFPService {
         }[];
         responses: ({
             items: {
-                id: string;
                 description: string;
+                id: string;
                 createdAt: Date;
                 updatedAt: Date;
                 quantity: number;
@@ -190,11 +190,11 @@ export declare class RFPService {
                 leadTimeDays: number | null;
                 skuId: string;
                 totalPrice: import("@prisma/client-runtime-utils").Decimal;
-                lineNumber: number;
                 unitPrice: import("@prisma/client-runtime-utils").Decimal;
+                responseId: string;
+                lineNumber: number;
                 complianceNotes: string | null;
                 deliveryTerms: string | null;
-                responseId: string;
             }[];
         } & {
             currency: string;
@@ -251,8 +251,8 @@ export declare class RFPService {
         currency: string | null;
         region: string | null;
         tags: string[];
-        id: string;
         description: string | null;
+        id: string;
         receivedAt: Date;
         status: import(".prisma/client").$Enums.RFPStatus;
         originalDocument: string | null;
@@ -277,8 +277,8 @@ export declare class RFPService {
         currency: string | null;
         region: string | null;
         tags: string[];
-        id: string;
         description: string | null;
+        id: string;
         receivedAt: Date;
         status: import(".prisma/client").$Enums.RFPStatus;
         originalDocument: string | null;

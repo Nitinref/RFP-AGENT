@@ -1,137 +1,71 @@
 import { apiClient } from './client';
-import { RFP, Workflow, TechnicalAnalysis, PricingAnalysis } from '../types';
+import { RFP, Workflow, TechnicalAnalysis, PricingAnalysis, ApiResponse } from '../types';
 
-// Helper function to extract data from different response formats
+// Helper to safely extract data from API responses
 const extractData = <T>(response: any): T => {
-  console.log('📦 Extracting data from:', response);
-  
-  // Case 1: Direct data
-  if (response && (response.id || response.overallCompliance || response.totalBidPrice)) {
-    return response;
-  }
-  
-  // Case 2: Wrapped in data property
-  if (response?.data && (response.data.id || response.data.overallCompliance || response.data.totalBidPrice)) {
+  // If response has success property and data
+  if (response?.success && response.data !== undefined) {
     return response.data;
   }
-  
-  // Case 3: ApiResponse format { success: true, data: {...} }
-  if (response?.success && response.data && (response.data.id || response.data.overallCompliance || response.data.totalBidPrice)) {
-    return response.data;
-  }
-  
-  // Case 4: Response is already what we need
+  // If response is direct data
   return response;
 };
 
 export const rfpAPI = {
-  // GET methods
   list: async (params?: any): Promise<RFP[]> => {
-    const response = await apiClient.get<any>('/rfps', { params });
-    const data = extractData<RFP[]>(response);
-    
-    if (!Array.isArray(data)) {
-      throw new Error('Expected array of RFPs');
-    }
-    
-    return data;
+    const response = await apiClient.get<ApiResponse<RFP[]>>('/rfps', { params });
+    return extractData<RFP[]>(response);
   },
 
   getById: async (id: string): Promise<RFP> => {
-    const response = await apiClient.get<any>(`/rfps/${id}`);
-    const data = extractData<RFP>(response);
-    
-    if (!data.id) {
-      throw new Error('RFP not found');
-    }
-    
-    return data;
+    const response = await apiClient.get<ApiResponse<RFP>>(`/rfps/${id}`);
+    return extractData<RFP>(response);
   },
 
-  // Workflow methods
-  getWorkflowStatus: async (id: string): Promise<Workflow> => {
-    const response = await apiClient.get<any>(`/rfps/${id}/workflow/status`);
-    const data = extractData<Workflow>(response);
-    
-    if (!data.id) {
-      throw new Error('Workflow not found');
-    }
-    
-    return data;
+  create: async (input: Partial<RFP>): Promise<RFP> => {
+    const response = await apiClient.post<ApiResponse<RFP>>('/rfps', input);
+    return extractData<RFP>(response);
   },
 
-  getTechnicalAnalysis: async (id: string): Promise<TechnicalAnalysis> => {
-    const response = await apiClient.get<any>(`/rfps/${id}/technical-analysis`);
-    const data = extractData<TechnicalAnalysis>(response);
-    
-    if (data.overallCompliance === undefined) {
-      throw new Error('Invalid technical analysis response');
-    }
-    
-    return data;
+  update: async (id: string, updates: Partial<RFP>): Promise<RFP> => {
+    const response = await apiClient.put<ApiResponse<RFP>>(`/rfps/${id}`, updates);
+    return extractData<RFP>(response);
   },
 
-  getPricingAnalysis: async (id: string): Promise<PricingAnalysis> => {
-    const response = await apiClient.get<any>(`/rfps/${id}/pricing-analysis`);
-    const data = extractData<PricingAnalysis>(response);
-    
-    if (!data.totalBidPrice) {
-      throw new Error('Invalid pricing analysis response');
-    }
-    
-    return data;
-  },
-
-  // POST methods
-  create: async (input: any): Promise<RFP> => {
-    const response = await apiClient.post<any>('/rfps', input);
-    const data = extractData<RFP>(response);
-    
-    if (!data.id) {
-      throw new Error('Failed to create RFP');
-    }
-    
-    return data;
-  },
-
-  startWorkflow: async (id: string, triggerReason?: string): Promise<Workflow> => {
-    const response = await apiClient.post<any>(`/rfps/${id}/workflow`, {
-      triggerType: 'MANUAL',
-      triggerReason,
-    });
-    
-    const data = extractData<Workflow>(response);
-    
-    if (!data.id) {
-      throw new Error('Failed to start workflow');
-    }
-    
-    return data;
-  },
-
-  // PUT methods
-  update: async (id: string, updates: any): Promise<RFP> => {
-    const response = await apiClient.put<any>(`/rfps/${id}`, updates);
-    const data = extractData<RFP>(response);
-    
-    if (!data.id) {
-      throw new Error('Failed to update RFP');
-    }
-    
-    return data;
-  },
-
-  // DELETE methods
   delete: async (id: string): Promise<void> => {
     await apiClient.delete(`/rfps/${id}`);
   },
 
-  // Document upload
+  startWorkflow: async (id: string, triggerReason?: string): Promise<Workflow> => {
+    const response = await apiClient.post<ApiResponse<Workflow>>(`/rfps/${id}/workflow`, {
+      triggerType: 'MANUAL',
+      triggerReason,
+    });
+    return extractData<Workflow>(response);
+  },
+
+  getWorkflowStatus: async (id: string): Promise<Workflow> => {
+    const response = await apiClient.get<ApiResponse<Workflow>>(`/rfps/${id}/workflow/status`);
+    return extractData<Workflow>(response);
+  },
+
+  getTechnicalAnalysis: async (id: string): Promise<TechnicalAnalysis> => {
+    const response = await apiClient.get<ApiResponse<TechnicalAnalysis>>(`/rfps/${id}/technical-analysis`);
+    return extractData<TechnicalAnalysis>(response);
+  },
+
+  getPricingAnalysis: async (id: string): Promise<PricingAnalysis> => {
+    const response = await apiClient.get<ApiResponse<PricingAnalysis>>(`/rfps/${id}/pricing-analysis`);
+    return extractData<PricingAnalysis>(response);
+  },
+
   uploadDocument: async (id: string, file: File): Promise<any> => {
     const formData = new FormData();
     formData.append('file', file);
     
-    const response = await apiClient.post<any>(`/rfps/${id}/document`, formData);
+    const response = await apiClient.post<ApiResponse<any>>(`/rfps/${id}/document`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
     return extractData<any>(response);
   },
 };

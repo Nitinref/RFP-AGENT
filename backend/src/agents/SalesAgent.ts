@@ -51,13 +51,17 @@ export class SalesAgent extends BaseAgent {
           recommendations: analysis.recommendations,
         },
       };
-    } catch (error) {
-      logger.error('Sales Agent execution failed', { error });
-      return {
-        success: false,
-        error: (error as Error).message,
-      };
-    }
+    }catch (error) {
+  logger.error('Sales Agent execution failed', {
+    message: (error as Error).message,
+    stack: (error as Error).stack,
+  });
+  return {
+    success: false,
+    error: (error as Error).message,
+  };
+}
+
   }
 
   private async analyzeRFP(rfp: any, workflowRunId: string) {
@@ -124,16 +128,20 @@ Consider:
         reasoning: parsed.reasoning,
       };
     } catch (error) {
-      logger.error('RFP analysis failed', { error });
-      
-      return {
-        priority: Priority.MEDIUM,
-        strategicValue: 5,
-        winProbability: 0.5,
-        recommendations: ['Requires detailed technical review'],
-        reasoning: 'Analysis failed, using default values',
-      };
-    }
+  logger.error('RFP analysis failed', {
+    message: (error as Error).message,
+    stack: (error as Error).stack,
+  });
+
+  return {
+    priority: Priority.MEDIUM,
+    strategicValue: 5,
+    winProbability: 0.5,
+    recommendations: ['Requires detailed technical review'],
+    reasoning: 'Analysis failed, using default values',
+  };
+}
+
   }
 }
 

@@ -1,35 +1,23 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCreateRFP } from '@/lib/hooks/useRFP';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import { ArrowLeft } from 'lucide-react';
-import Link from 'next/link';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import { Button } from '@/components/ui/button';
+import { useCreateRFP } from '@/lib/hooks/useRFP';
 
-const rfpSchema = z.object({
-  rfpNumber: z.string().min(1, 'RFP number is required'),
-  title: z.string().min(1, 'Title is required'),
-  issuer: z.string().min(1, 'Issuer is required'),
-  industry: z.string().min(1, 'Industry is required'),
-  source: z.string(),
-  submissionDeadline: z.string(),
-  priority: z.string().optional(),
-  estimatedValue: z.number().optional(),
-  currency: z.string().optional(),
-  description: z.string().optional(),
-});
+type RFPFormData = {
+  rfpNumber: string;
+  title: string;
+  description?: string;
+  issuer: string;
+  industry: string;
+  priority: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+  submissionDeadline: string;
+  estimatedValue?: number | string;
+  currency: string;
+};
 
-type RFPFormData = z.infer<typeof rfpSchema>;
-
-export default function NewRFPPage() {
+export default function CreateRFPPage() {
   const router = useRouter();
   const createRFP = useCreateRFP();
 
@@ -37,118 +25,106 @@ export default function NewRFPPage() {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<RFPFormData>({
-    resolver: zodResolver(rfpSchema),
-    defaultValues: {
-      source: 'MANUAL',
-      priority: 'MEDIUM',
-      currency: 'USD',
-    },
-  });
+  } = useForm<RFPFormData>();
 
+  // ✅ THIS IS THE IMPORTANT PART
   const onSubmit = async (data: RFPFormData) => {
-    await createRFP.mutateAsync(data);
+    const payload = {
+      rfpNumber: data.rfpNumber,
+      title: data.title,
+      description: data.description,
+      issuer: data.issuer,
+      industry: data.industry,
+
+      // 🔴 REQUIRED TRANSFORMATIONS
+      priority: data.priority.toUpperCase(), // "LOW"
+      estimatedValue: data.estimatedValue
+        ? Number(data.estimatedValue)
+        : undefined,
+
+      submissionDeadline: new Date(
+        data.submissionDeadline
+      ).toISOString(), // ISO string
+
+      currency: data.currency,
+      source: 'MANUAL',
+    };
+
+    console.log('CREATE RFP PAYLOAD', payload);
+
+    await createRFP.mutateAsync(payload);
     router.push('/rfps');
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center space-x-4">
-        <Link href="/rfps">
-          <Button variant="ghost" size="icon">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        </Link>
-        <div>
-          <h1 className="text-3xl font-bold">Create New RFP</h1>
-          <p className="text-gray-500 mt-1">Fill in the RFP details to get started</p>
+    <div style={{ padding: 32, maxWidth: 700 }}>
+      <h1 style={{ fontSize: 24, fontWeight: 'bold', marginBottom: 16 }}>
+        Create New RFP
+      </h1>
+
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <div style={{ marginBottom: 12 }}>
+          <label>RFP Number *</label>
+          <input {...register('rfpNumber', { required: true })} />
         </div>
-      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>RFP Information</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="rfpNumber">RFP Number *</Label>
-                <Input id="rfpNumber" {...register('rfpNumber')} />
-                {errors.rfpNumber && (
-                  <p className="text-sm text-red-500">{errors.rfpNumber.message}</p>
-                )}
-              </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Title *</label>
+          <input {...register('title', { required: true })} />
+        </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="priority">Priority</Label>
-                <Select id="priority" {...register('priority')}>
-                  <option value="HIGH">High</option>
-                  <option value="MEDIUM">Medium</option>
-                  <option value="LOW">Low</option>
-                </Select>
-              </div>
-            </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Description</label>
+          <textarea {...register('description')} />
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="title">Title *</Label>
-              <Input id="title" {...register('title')} />
-              {errors.title && <p className="text-sm text-red-500">{errors.title.message}</p>}
-            </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Issuer *</label>
+          <input {...register('issuer', { required: true })} />
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
-              <Textarea id="description" {...register('description')} rows={4} />
-            </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Industry *</label>
+          <input {...register('industry', { required: true })} />
+        </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="issuer">Issuer *</Label>
-                <Input id="issuer" {...register('issuer')} />
-                {errors.issuer && <p className="text-sm text-red-500">{errors.issuer.message}</p>}
-              </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Priority *</label>
+          <select {...register('priority', { required: true })}>
+            <option value="LOW">Low</option>
+            <option value="MEDIUM">Medium</option>
+            <option value="HIGH">High</option>
+          </select>
+        </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="industry">Industry *</Label>
-                <Input id="industry" {...register('industry')} />
-                {errors.industry && (
-                  <p className="text-sm text-red-500">{errors.industry.message}</p>
-                )}
-              </div>
-            </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Submission Deadline *</label>
+          <input
+            type="datetime-local"
+            {...register('submissionDeadline', { required: true })}
+          />
+        </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="submissionDeadline">Submission Deadline *</Label>
-              <Input id="submissionDeadline" type="datetime-local" {...register('submissionDeadline')} />
-            </div>
+        <div style={{ marginBottom: 12 }}>
+          <label>Estimated Value</label>
+          <input
+            type="number"
+            {...register('estimatedValue')}
+          />
+        </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="estimatedValue">Estimated Value</Label>
-                <Input
-                  id="estimatedValue"
-                  type="number"
-                  {...register('estimatedValue', { valueAsNumber: true })}
-                />
-              </div>
+        <div style={{ marginBottom: 16 }}>
+          <label>Currency</label>
+          <select {...register('currency')}>
+            <option value="USD">USD</option>
+            <option value="INR">INR</option>
+          </select>
+        </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="currency">Currency</Label>
-                <Input id="currency" {...register('currency')} defaultValue="USD" />
-              </div>
-            </div>
-
-            <div className="flex justify-end space-x-4">
-              <Button type="button" variant="outline" onClick={() => router.back()}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={createRFP.isPending}>
-                {createRFP.isPending ? 'Creating...' : 'Create RFP'}
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
+        <Button type="submit" disabled={createRFP.isPending}>
+          {createRFP.isPending ? 'Creating...' : 'Create RFP'}
+        </Button>
+      </form>
     </div>
   );
 }

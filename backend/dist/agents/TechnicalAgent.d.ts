@@ -11,6 +11,7 @@ export declare class TechnicalAgent extends BaseAgent {
     protected run(input: TechnicalAgentInput): Promise<AgentOutput>;
     private extractRequirements;
     private matchRequirementsToProducts;
+    private getSampleMatches;
     private calculateOverallCompliance;
     private identifyCriticalGaps;
     private calculateConfidence;

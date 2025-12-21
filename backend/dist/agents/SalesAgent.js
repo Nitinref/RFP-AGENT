@@ -44,7 +44,10 @@ export class SalesAgent extends BaseAgent {
             };
         }
         catch (error) {
-            logger.error('Sales Agent execution failed', { error });
+            logger.error('Sales Agent execution failed', {
+                message: error.message,
+                stack: error.stack,
+            });
             return {
                 success: false,
                 error: error.message,
@@ -100,7 +103,10 @@ Consider:
             };
         }
         catch (error) {
-            logger.error('RFP analysis failed', { error });
+            logger.error('RFP analysis failed', {
+                message: error.message,
+                stack: error.stack,
+            });
             return {
                 priority: Priority.MEDIUM,
                 strategicValue: 5,

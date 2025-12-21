@@ -5,6 +5,7 @@ export declare abstract class BaseAgent {
     protected agentType: AgentType;
     protected modelService: ModelService;
     constructor(agentType: AgentType);
+    protected cleanJsonResponse(raw: string): string;
     execute(input: AgentInput): Promise<AgentOutput>;
     protected executeModel(prompt: string, taskType: string, complexity: Complexity, systemPrompt?: string, temperature?: number, maxTokens?: number, workflowRunId?: string, agentActivityId?: string): Promise<string>;
     protected abstract run(input: AgentInput): Promise<AgentOutput>;

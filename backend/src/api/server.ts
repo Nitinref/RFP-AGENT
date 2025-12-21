@@ -28,8 +28,7 @@ app.use(cors({
   exposedHeaders: ['Authorization'], // Expose Authorization header
 }));
 
-// Handle preflight requests
-app.options('*', cors());
+
 
 app.use(compression());
 
