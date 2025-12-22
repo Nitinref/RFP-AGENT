@@ -2,7 +2,14 @@ import { AgentType, Complexity, RequirementCategory } from '@prisma/client';
 import BaseAgent from './base/BaseAgent.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
+import { runWithAutoFallback } from "../utils/runWithAutoFallback.js";
 export class TechnicalAgent extends BaseAgent {
+    fallbackMetrics = {
+        extractionUsedFallback: false,
+        extractionFallbackReason: null,
+        matchingUsedFallback: false,
+        matchingFallbackReason: null,
+    };
     constructor() {
         super(AgentType.TECHNICAL_SPECIALIST);
     }
@@ -10,6 +17,13 @@ export class TechnicalAgent extends BaseAgent {
         logger.info('Technical Agent: Starting technical analysis', {
             rfpId: input.context.rfpId,
         });
+        // Reset fallback metrics for each run
+        this.fallbackMetrics = {
+            extractionUsedFallback: false,
+            extractionFallbackReason: null,
+            matchingUsedFallback: false,
+            matchingFallbackReason: null,
+        };
         try {
             const rfp = await prisma.rFP.findUnique({
                 where: { id: input.context.rfpId },
@@ -27,13 +41,19 @@ export class TechnicalAgent extends BaseAgent {
             }
             let requirements = rfp.requirements;
             if (requirements.length === 0) {
-                requirements = await this.extractRequirements(rfp, input.context.workflowRunId);
+                const extractionResult = await this.extractRequirementsWithFallback(rfp, input.context.workflowRunId);
+                requirements = extractionResult.requirements;
+                this.fallbackMetrics.extractionUsedFallback = extractionResult.usedFallback;
+                this.fallbackMetrics.extractionFallbackReason = extractionResult.fallbackReason;
             }
             const products = await prisma.productSKU.findMany({
                 where: { isActive: true },
                 include: { pricingTiers: true },
             });
-            const matches = await this.matchRequirementsToProducts(requirements, products, input.context.workflowRunId);
+            const matchingResult = await this.matchRequirementsToProductsWithFallback(requirements, products, input.context.workflowRunId);
+            const matches = matchingResult.matches;
+            this.fallbackMetrics.matchingUsedFallback = matchingResult.usedFallback;
+            this.fallbackMetrics.matchingFallbackReason = matchingResult.fallbackReason;
             // Ensure matches have gaps property
             const safeMatches = matches.map(match => ({
                 ...match,
@@ -48,6 +68,13 @@ export class TechnicalAgent extends BaseAgent {
                     criticalGaps: this.identifyCriticalGaps(safeMatches),
                     recommendations: safeMatches,
                     confidence: this.calculateConfidence(safeMatches),
+                    // @ts-ignore
+                    metadata: {
+                        fallbackMetrics: this.fallbackMetrics,
+                        timestamp: new Date().toISOString(),
+                        requirementsCount: requirements.length,
+                        productsCount: products.length,
+                    },
                 },
             });
             for (const match of safeMatches.slice(0, 3)) {
@@ -71,6 +98,7 @@ export class TechnicalAgent extends BaseAgent {
                 rfpId: input.context.rfpId,
                 matchesFound: safeMatches.length,
                 topMatch: safeMatches[0]?.sku,
+                fallbackMetrics: this.fallbackMetrics,
             });
             return {
                 success: true,
@@ -79,6 +107,7 @@ export class TechnicalAgent extends BaseAgent {
                     overallCompliance: analysis.overallCompliance,
                     topMatches: safeMatches.slice(0, 3),
                     criticalGaps: analysis.criticalGaps,
+                    fallbackMetrics: this.fallbackMetrics,
                 },
             };
         }
@@ -86,15 +115,19 @@ export class TechnicalAgent extends BaseAgent {
             logger.error('Technical Agent execution failed', {
                 message: error.message,
                 stack: error.stack,
+                rfpId: input.context.rfpId,
             });
             return {
                 success: false,
                 error: error.message,
+                data: {
+                    fallbackMetrics: this.fallbackMetrics,
+                },
             };
         }
     }
-    // ---------------- REQUIREMENT EXTRACTION ----------------
-    async extractRequirements(rfp, workflowRunId) {
+    // ---------------- REQUIREMENT EXTRACTION WITH FALLBACK ----------------
+    async extractRequirementsWithFallback(rfp, workflowRunId) {
         const content = rfp.documentChunks.map((c) => c.content).join('\n\n');
         const prompt = `
 Analyze the following RFP document and extract all technical requirements.
@@ -116,60 +149,94 @@ Return ONLY a valid JSON array:
   }
 ]
 `;
-        try {
-            const result = await this.executeModel(prompt, 'requirement_extraction', Complexity.HIGH, 'You are a technical specification analyst. Return ONLY valid JSON.', undefined, undefined, workflowRunId);
-            if (!result || result.trim().length < 20) {
-                logger.error('Requirement extraction returned empty output', { rawOutput: result });
-                return [];
-            }
-            let parsed;
+        const fallbackResult = await runWithAutoFallback({
+            primaryCall: async () => {
+                const result = await this.executeModel(prompt, 'requirement_extraction', Complexity.HIGH, 'You are a technical specification analyst. Return ONLY valid JSON.', undefined, undefined, workflowRunId);
+                // Validate the result before returning
+                if (!result || result.trim().length < 20) {
+                    throw new Error('Empty or invalid output from primary model');
+                }
+                let parsed;
+                try {
+                    parsed = JSON.parse(result);
+                    if (!Array.isArray(parsed)) {
+                        throw new Error('Output is not a valid JSON array');
+                    }
+                    if (parsed.length === 0) {
+                        throw new Error('No requirements extracted');
+                    }
+                }
+                catch (err) {
+                    throw new Error(`Invalid JSON output: ${err.message}`);
+                }
+                return {
+                    result: parsed,
+                    confidence: 0.8, // You could calculate this based on parsing success
+                };
+            },
+            fallbackCall: async () => {
+                logger.warn('Using fallback for requirement extraction', { rfpId: rfp.id });
+                // Fallback: Use a simpler, more deterministic extraction
+                const fallbackRequirements = this.getFallbackRequirements(rfp);
+                return {
+                    result: fallbackRequirements,
+                    confidence: 0.6, // Lower confidence for fallback
+                };
+            },
+            confidenceThreshold: 0.7
+        });
+        const requirements = fallbackResult.result.result;
+        const usedFallback = fallbackResult.fallbackUsed;
+        const fallbackReason = fallbackResult.fallbackReason;
+        // Save requirements to database
+        const saved = [];
+        for (const req of requirements) {
             try {
-                parsed = JSON.parse(result);
-                if (!Array.isArray(parsed))
-                    throw new Error('Not an array');
-            }
-            catch (err) {
-                logger.error('Invalid requirement extraction output', {
-                    message: err.message,
-                    rawOutput: result,
-                });
-                return [];
-            }
-            const saved = [];
-            for (const req of parsed) {
-                saved.push(await prisma.rFPRequirement.create({
+                const savedReq = await prisma.rFPRequirement.create({
                     data: {
                         rfpId: rfp.id,
-                        category: req.category,
-                        section: req.section,
+                        category: req.category || "TECHNICAL",
+                        section: req.section || "General",
                         requirement: req.requirement,
-                        specification: req.specification,
-                        isMandatory: req.isMandatory,
-                        quantity: req.quantity,
-                        unit: req.unit,
-                        technicalParams: req.technicalParams,
+                        specification: req.specification || null,
+                        isMandatory: req.isMandatory !== undefined ? req.isMandatory : true,
+                        quantity: req.quantity || null,
+                        unit: req.unit || null,
+                        technicalParams: req.technicalParams || {},
                     },
-                }));
+                });
+                saved.push(savedReq);
             }
-            return saved;
+            catch (error) {
+                logger.error('Failed to save requirement', {
+                    requirement: req,
+                    error: error.message,
+                });
+            }
         }
-        catch (error) {
-            logger.error('Requirement extraction failed', {
-                message: error.message,
-                stack: error.stack,
-            });
-            return [];
-        }
+        logger.info('Requirements extracted', {
+            count: saved.length,
+            usedFallback,
+            fallbackReason,
+        });
+        return {
+            requirements: saved,
+            usedFallback,
+            fallbackReason,
+        };
     }
-    // ---------------- SKU MATCHING ----------------
-    async matchRequirementsToProducts(requirements, products, workflowRunId) {
-        const mandatoryReqs = requirements.filter((r) => r.isMandatory);
+    // ---------------- SKU MATCHING WITH FALLBACK ----------------
+    async matchRequirementsToProductsWithFallback(requirements, products, workflowRunId) {
         // If no products in database, return sample matches
         if (!products || products.length === 0) {
             logger.warn('No products found in database, returning sample matches');
-            return this.getSampleMatches();
+            return {
+                matches: this.getSampleMatches(),
+                usedFallback: true,
+                fallbackReason: 'No products in database',
+            };
         }
-        // If no mandatory requirements, match with all products
+        const mandatoryReqs = requirements.filter((r) => r.isMandatory);
         const reqsToUse = mandatoryReqs.length > 0 ? mandatoryReqs : requirements.slice(0, 5);
         const prompt = `
 Match RFP technical requirements to products.
@@ -188,54 +255,145 @@ Return ONLY a valid JSON array of matches. Format:
     "matchScore": number,
     "specMatchScore": number,
     "complianceDetails": { "key": "value" },
-    "gaps": ["string"],   // Optional, can be empty array
-    "risks": ["string"],  // Optional, can be empty array
+    "gaps": ["string"],
+    "risks": ["string"],
     "justification": "string",
     "confidence": number
   }
 ]
 NEVER return an empty array. Return at least one match.
 `;
-        try {
-            const result = await this.executeModel(prompt, 'sku_matching', Complexity.CRITICAL, 'You are a technical product matching expert. Return ONLY valid JSON.', undefined, undefined, workflowRunId);
-            if (!result || result.trim().length < 20) {
-                logger.error('SKU matching returned empty output', { rawOutput: result });
-                return this.getSampleMatches();
-            }
-            let matches;
-            try {
-                matches = JSON.parse(result);
-                if (!Array.isArray(matches))
-                    throw new Error('Not an array');
-            }
-            catch (err) {
-                logger.error('Invalid SKU matching output', {
-                    message: err.message,
-                    rawOutput: result,
+        const fallbackResult = await runWithAutoFallback({
+            primaryCall: async () => {
+                const result = await this.executeModel(prompt, 'sku_matching', Complexity.CRITICAL, 'You are a technical product matching expert. Return ONLY valid JSON.', undefined, undefined, workflowRunId);
+                if (!result || result.trim().length < 20) {
+                    throw new Error('Empty or invalid output from primary model');
+                }
+                let matches;
+                try {
+                    matches = JSON.parse(result);
+                    if (!Array.isArray(matches)) {
+                        throw new Error('Output is not a valid JSON array');
+                    }
+                    if (matches.length === 0) {
+                        throw new Error('No matches found');
+                    }
+                }
+                catch (err) {
+                    throw new Error(`Invalid JSON output: ${err.message}`);
+                }
+                // Validate each match
+                const validatedMatches = matches.map(match => ({
+                    skuId: match.skuId || 'unknown',
+                    sku: match.sku || 'Unknown Product',
+                    matchScore: this.validateNumber(match.matchScore, 70),
+                    specMatchScore: this.validateNumber(match.specMatchScore, 70),
+                    complianceDetails: match.complianceDetails || {},
+                    gaps: Array.isArray(match.gaps) ? match.gaps : [],
+                    risks: Array.isArray(match.risks) ? match.risks : [],
+                    justification: match.justification || 'AI-matched based on requirements',
+                    confidence: this.validateNumber(match.confidence, 0.7, 0, 1),
+                }));
+                const topMatchScore = validatedMatches[0]?.matchScore || 0;
+                return {
+                    result: validatedMatches,
+                    confidence: topMatchScore / 100,
+                };
+            },
+            fallbackCall: async () => {
+                logger.warn('Using fallback for SKU matching', {
+                    requirementCount: requirements.length,
+                    productCount: products.length,
                 });
-                return this.getSampleMatches();
+                const fallbackMatches = this.getFallbackMatches(requirements, products);
+                return {
+                    result: fallbackMatches,
+                    confidence: 0.6, // Lower confidence for fallback
+                };
+            },
+            confidenceThreshold: 0.65
+        });
+        const matches = fallbackResult.result.result;
+        const usedFallback = fallbackResult.fallbackUsed;
+        const fallbackReason = fallbackResult.fallbackReason;
+        // Sort by match score
+        const sortedMatches = matches.sort((a, b) => b.matchScore - a.matchScore);
+        logger.info('SKU matching completed', {
+            matchesFound: sortedMatches.length,
+            topScore: sortedMatches[0]?.matchScore,
+            usedFallback,
+            fallbackReason,
+        });
+        return {
+            matches: sortedMatches,
+            usedFallback,
+            fallbackReason,
+        };
+    }
+    // ---------------- FALLBACK IMPLEMENTATIONS ----------------
+    getFallbackRequirements(rfp) {
+        // Simple fallback: extract key phrases from document
+        const content = rfp.documentChunks.map((c) => c.content).join('\n\n');
+        // Look for common requirement indicators
+        const requirementIndicators = [
+            'must', 'shall', 'required', 'need', 'necessary',
+            'comply with', 'meet', 'adhere to', 'standard', 'specification'
+        ];
+        const lines = content.split('\n');
+        const requirements = [];
+        for (const line of lines) {
+            if (requirementIndicators.some(indicator => line.toLowerCase().includes(indicator))) {
+                requirements.push({
+                    category: "TECHNICAL",
+                    section: "General",
+                    requirement: line.trim().substring(0, 200),
+                    specification: null,
+                    isMandatory: true,
+                    quantity: 1,
+                    unit: null,
+                    technicalParams: {}
+                });
             }
-            // Ensure matches have required properties
-            const validatedMatches = matches.map(match => ({
-                skuId: match.skuId || 'unknown',
-                sku: match.sku || 'Unknown Product',
-                matchScore: typeof match.matchScore === 'number' ? match.matchScore : 70,
-                specMatchScore: typeof match.specMatchScore === 'number' ? match.specMatchScore : 70,
-                complianceDetails: match.complianceDetails || {},
-                gaps: Array.isArray(match.gaps) ? match.gaps : [],
-                risks: Array.isArray(match.risks) ? match.risks : [],
-                justification: match.justification || 'AI-matched based on requirements',
-                confidence: typeof match.confidence === 'number' ? match.confidence : 0.7,
-            }));
-            return validatedMatches.sort((a, b) => b.matchScore - a.matchScore);
+            if (requirements.length >= 5)
+                break; // Limit fallback to 5 requirements
         }
-        catch (error) {
-            logger.error('SKU matching failed', {
-                message: error.message,
-                stack: error.stack,
+        // If no requirements found with indicators, create a default one
+        if (requirements.length === 0) {
+            requirements.push({
+                category: "TECHNICAL",
+                section: "General",
+                requirement: "Basic technical requirements for " + (rfp.title || "the project"),
+                specification: "Standard technical specifications apply",
+                isMandatory: true,
+                quantity: 1,
+                unit: "system",
+                technicalParams: {}
             });
+        }
+        return requirements;
+    }
+    getFallbackMatches(requirements, products) {
+        if (!products || products.length === 0) {
             return this.getSampleMatches();
         }
+        // Simple fallback matching: pick first 3 products
+        const fallbackMatches = products.slice(0, 3).map((product, index) => ({
+            skuId: product.id || `fallback_${index + 1}`,
+            sku: product.name || `Fallback Product ${index + 1}`,
+            matchScore: 70 - (index * 10), // Decreasing scores
+            specMatchScore: 65 - (index * 10),
+            complianceDetails: {
+                fallback: true,
+                matchType: 'fallback_simple',
+                requirementCount: requirements.length,
+            },
+            gaps: ['Match performed using fallback logic'],
+            risks: ['Limited confidence in match accuracy'],
+            justification: 'Fallback matching due to primary model limitations',
+            confidence: 0.6 - (index * 0.1),
+        }));
+        // @ts-ignore
+        return fallbackMatches;
     }
     // ---------------- SAMPLE DATA FOR TESTING ----------------
     getSampleMatches() {
@@ -249,7 +407,8 @@ NEVER return an empty array. Return at least one match.
                     // @ts-ignore
                     technical: 90,
                     features: 80,
-                    compatibility: 85
+                    compatibility: 85,
+                    sample: true,
                 },
                 gaps: ['Requires additional sensors', 'Needs custom configuration'],
                 risks: ['Long lead time', 'Requires on-site installation'],
@@ -265,7 +424,8 @@ NEVER return an empty array. Return at least one match.
                     // @ts-ignore
                     technical: 75,
                     features: 70,
-                    compatibility: 80
+                    compatibility: 80,
+                    sample: true,
                 },
                 gaps: ['Missing temperature sensors', 'Limited range'],
                 risks: ['Partial compliance', 'May need additional components'],
@@ -281,7 +441,8 @@ NEVER return an empty array. Return at least one match.
                     // @ts-ignore
                     technical: 65,
                     features: 60,
-                    compatibility: 70
+                    compatibility: 70,
+                    sample: true,
                 },
                 gaps: ['Limited I/O capacity', 'No redundancy features'],
                 risks: ['May not scale', 'Limited support'],
@@ -291,6 +452,13 @@ NEVER return an empty array. Return at least one match.
         ];
     }
     // ---------------- HELPERS ----------------
+    validateNumber(value, defaultValue, min = 0, max = 100) {
+        const num = Number(value);
+        if (isNaN(num)) {
+            return defaultValue;
+        }
+        return Math.max(min, Math.min(max, num));
+    }
     calculateOverallCompliance(matches) {
         return matches.length > 0 ? matches[0].matchScore : 0;
     }
@@ -299,7 +467,6 @@ NEVER return an empty array. Return at least one match.
             return ['No suitable products found'];
         }
         const top = matches[0];
-        // Ensure gaps is an array
         const gaps = Array.isArray(top.gaps) ? top.gaps : [];
         if (top.matchScore < 70) {
             return ['Low compliance: Match score below 70%', ...gaps];
@@ -310,7 +477,6 @@ NEVER return an empty array. Return at least one match.
         if (!matches || matches.length === 0)
             return 0;
         let confidence = matches[0].matchScore / 100;
-        // Apply penalties if gaps exist
         const gaps = Array.isArray(matches[0].gaps) ? matches[0].gaps : [];
         const risks = Array.isArray(matches[0].risks) ? matches[0].risks : [];
         if (gaps.length > 0)

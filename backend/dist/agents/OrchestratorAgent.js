@@ -5,6 +5,7 @@ import TechnicalAgent from './TechnicalAgent.js';
 import PricingAgent from './PricingAgent.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
+import { safeJsonParse } from "../utils/safeJsonParse.js";
 export class OrchestratorAgent extends BaseAgent {
     salesAgent;
     technicalAgent;
@@ -144,7 +145,25 @@ Return ONLY valid JSON:
 }
 `;
         const result = await this.executeModel(prompt, 'response_generation', Complexity.HIGH, 'You are an expert B2B proposal writer.', 0.4, 2048, workflowRunId);
-        const parsed = JSON.parse(result);
+        const parsed = safeJsonParse(result);
+        if (!parsed) {
+            logger.warn("Invalid JSON from Gemini, using fallback final response");
+            const response = await prisma.rFPResponse.create({
+                data: {
+                    rfpId,
+                    version: 1,
+                    status: 'DRAFT',
+                    executiveSummary: "Proposal generated using fallback response due to AI formatting issue.",
+                    complianceStatement: "Compliance analysis completed with partial AI assistance.",
+                    totalPrice: pricingData.pricing.totalBidPrice,
+                    currency: 'USD',
+                    validityPeriod: 30,
+                    paymentTerms: "Net 30",
+                    deliveryTimeline: "As per agreed schedule",
+                },
+            });
+            return response;
+        }
         const response = await prisma.rFPResponse.create({
             data: {
                 rfpId,

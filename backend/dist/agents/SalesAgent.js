@@ -2,6 +2,7 @@ import { AgentType, Complexity, Priority } from '@prisma/client';
 import BaseAgent from './base/BaseAgent.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
+import { safeJsonParse } from "../utils/safeJsonParse.js";
 export class SalesAgent extends BaseAgent {
     constructor() {
         super(AgentType.SALES_SCOUT);
@@ -93,7 +94,17 @@ Consider:
         const systemPrompt = `You are an expert B2B sales strategist with deep RFP evaluation experience. Be analytical and realistic.`;
         try {
             const result = await this.executeModel(prompt, 'rfp_triage', Complexity.MEDIUM, systemPrompt, 0.3, 1024, workflowRunId);
-            const parsed = JSON.parse(result);
+            const parsed = safeJsonParse(result);
+            if (!parsed) {
+                logger.warn("Invalid JSON from Gemini in SalesAgent, using defaults");
+                return {
+                    priority: Priority.MEDIUM,
+                    strategicValue: 5,
+                    winProbability: 0.5,
+                    recommendations: ['Requires detailed technical review'],
+                    reasoning: 'AI returned invalid JSON, fallback applied',
+                };
+            }
             return {
                 priority: parsed.priority,
                 strategicValue: parsed.strategicValue,

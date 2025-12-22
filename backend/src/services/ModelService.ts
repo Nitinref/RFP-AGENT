@@ -4,7 +4,7 @@ import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
 import config from '../config/environment.js';
 import OpenAI from 'openai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 
 interface ModelExecutionParams {
   prompt: string;
@@ -20,7 +20,8 @@ interface ModelExecutionParams {
 export class ModelService {
   private static instance: ModelService;
   private openai: OpenAI;
-  private gemini: GoogleGenerativeAI;
+  private genAI: GoogleGenerativeAI;
+  private geminiModels: Map<string, GenerativeModel> = new Map();
 
   private constructor() {
     // ✅ Initialize OpenAI client
@@ -29,7 +30,7 @@ export class ModelService {
     });
 
     // ✅ Initialize Gemini client
-    this.gemini = new GoogleGenerativeAI(config.gemini.apiKey);
+    this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
   }
 
   static getInstance(): ModelService {
@@ -51,16 +52,17 @@ export class ModelService {
       agentActivityId,
     } = params;
 
-    const { primaryModel, chosenModel, isFallback, provider } = this.selectModel(complexity, taskType);
+    // Choose model based on config
+    const { modelId, provider, isFallback } = this.selectModel(complexity, taskType);
 
-    let modelDecision;
+    // Log model decision
     if (workflowRunId && agentActivityId) {
-      modelDecision = await prisma.modelDecision.create({
+      await prisma.modelDecision.create({
         data: {
           workflowRunId,
           agentActivityId,
-          primaryModel,
-          chosenModel,
+          primaryModel: config.models.primary,
+          chosenModel: modelId,
           isFallback,
           reason: this.getModelSelectionReason(complexity, taskType, isFallback),
           taskType,
@@ -70,71 +72,78 @@ export class ModelService {
       });
     }
 
-    try {
-      let response;
+    logger.info('🤖 Executing model', {
+      provider,
+      model: modelId,
+      taskType,
+      complexity,
+    });
 
-      // ✅ Route to correct provider
+    try {
+      let result: { content: string; tokenUsage: number };
+
+      // Route to correct provider
       if (provider === 'openai') {
-        response = await this.callOpenAI(chosenModel, prompt, systemPrompt, temperature, maxTokens);
+        result = await this.callOpenAI(modelId, prompt, systemPrompt, temperature, maxTokens);
       } else if (provider === 'gemini') {
-        response = await this.callGemini(chosenModel, prompt, systemPrompt, temperature, maxTokens);
+        result = await this.callGemini(modelId, prompt, systemPrompt, temperature, maxTokens);
       } else {
         throw new Error(`Unknown provider: ${provider}`);
       }
 
-      if (modelDecision) {
-        await prisma.modelDecision.update({
-          where: { id: modelDecision.id },
-          data: {
-            wasSuccessful: true,
-            actualTokensUsed: response.tokenUsage,
-          },
-        });
-      }
+      logger.info('✅ Model execution successful', {
+        provider,
+        model: modelId,
+        tokenUsage: result.tokenUsage,
+      });
 
-      return response.content;
+      return result.content;
     } catch (error: any) {
-      logger.error('Model execution failed', { error: error.message, chosenModel, taskType });
+      logger.error('❌ Model execution failed', {
+        provider,
+        model: modelId,
+        error: error.message,
+        taskType,
+      });
 
-      // Try fallback
+      // Try fallback model
       if (!isFallback) {
-        logger.info('Attempting fallback model');
-        
+        logger.info('🔄 Attempting fallback model');
+        const fallbackConfig = this.getFallbackConfig();
+
         try {
-          const fallbackProvider = config.models.fallbackProvider;
-          const fallbackModel = config.models.fallback;
-          
-          let fallbackResponse;
-          if (fallbackProvider === 'openai') {
-            fallbackResponse = await this.callOpenAI(fallbackModel, prompt, systemPrompt, temperature, maxTokens);
+          let fallbackResult;
+          if (fallbackConfig.provider === 'openai') {
+            fallbackResult = await this.callOpenAI(
+              fallbackConfig.model,
+              prompt,
+              systemPrompt,
+              temperature,
+              maxTokens
+            );
           } else {
-            fallbackResponse = await this.callGemini(fallbackModel, prompt, systemPrompt, temperature, maxTokens);
+            fallbackResult = await this.callGemini(
+              fallbackConfig.model,
+              prompt,
+              systemPrompt,
+              temperature,
+              maxTokens
+            );
           }
 
-          if (modelDecision) {
-            await prisma.modelDecision.update({
-              where: { id: modelDecision.id },
-              data: {
-                chosenModel: fallbackModel,
-                isFallback: true,
-                wasSuccessful: true,
-                actualTokensUsed: fallbackResponse.tokenUsage,
-              },
-            });
-          }
+          logger.info('✅ Fallback model successful', {
+            provider: fallbackConfig.provider,
+            model: fallbackConfig.model,
+            tokenUsage: fallbackResult.tokenUsage,
+          });
 
-          return fallbackResponse.content;
+          return fallbackResult.content;
         } catch (fallbackError: any) {
-          logger.error('Fallback model also failed', { fallbackError: fallbackError.message });
-          throw fallbackError;
+          logger.error('❌ Fallback model also failed', {
+            error: fallbackError.message,
+          });
+          throw new Error(`Primary and fallback models failed: ${error.message}`);
         }
-      }
-
-      if (modelDecision) {
-        await prisma.modelDecision.update({
-          where: { id: modelDecision.id },
-          data: { wasSuccessful: false },
-        });
       }
 
       throw error;
@@ -144,20 +153,39 @@ export class ModelService {
   private selectModel(complexity: Complexity, taskType: string) {
     const primaryModel = config.models.primary;
     const primaryProvider = config.models.primaryProvider;
-    
-    let chosenModel = primaryModel;
-    let provider = primaryProvider;
-    let isFallback = false;
 
-    // Use fallback for LOW complexity tasks to save costs
+    const fallbackModel = config.models.fallback;
+    const fallbackProvider = config.models.fallbackProvider;
+
+    // LOW complexity → fallback
     if (complexity === Complexity.LOW) {
-      chosenModel = config.models.fallback;
-      provider = config.models.fallbackProvider;
-      isFallback = true;
+      return {
+        modelId: fallbackModel,
+        provider: fallbackProvider,
+        isFallback: true,
+      };
     }
 
-    return { primaryModel, chosenModel, isFallback, provider };
+    // HIGH / CRITICAL → primary
+    return {
+      modelId: primaryModel,
+      provider: primaryProvider,
+      isFallback: false,
+    };
   }
+
+
+  private getFallbackConfig() {
+    if (!config.models.fallback || !config.models.fallbackProvider) {
+      throw new Error("Fallback model configuration missing");
+    }
+
+    return {
+      model: config.models.fallback,
+      provider: config.models.fallbackProvider,
+    };
+  }
+
 
   private getModelSelectionReason(complexity: Complexity, taskType: string, isFallback: boolean): string {
     if (isFallback && complexity === Complexity.LOW) {
@@ -172,18 +200,21 @@ export class ModelService {
   // ═══════════════════════════════════════════════════════════
   // OPENAI INTEGRATION
   // ═══════════════════════════════════════════════════════════
+
   private async callOpenAI(
-    model: string,
+    modelId: string,
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.3,
     maxTokens: number = 2048
   ): Promise<{ content: string; tokenUsage: number }> {
-    logger.info('🤖 Calling OpenAI API', { model, temperature, maxTokens });
+    logger.info("🔥 OPENAI API HIT", {
+      model: modelId,
+    });
 
     try {
       const completion = await this.openai.chat.completions.create({
-        model: model,
+        model: modelId,
         messages: [
           {
             role: 'system',
@@ -201,29 +232,22 @@ export class ModelService {
       const content = completion.choices[0]?.message?.content || '';
       const tokenUsage = completion.usage?.total_tokens || 0;
 
-      logger.info('✅ OpenAI API call successful', {
-        model,
-        inputTokens: completion.usage?.prompt_tokens,
-        outputTokens: completion.usage?.completion_tokens,
-        totalTokens: tokenUsage,
-      });
-
       return { content, tokenUsage };
     } catch (error: any) {
       logger.error('❌ OpenAI API call failed', {
+        model: modelId,
         error: error.message,
-        model,
         statusCode: error.status,
       });
 
       if (error.status === 401) {
-        throw new Error('Invalid OpenAI API key. Check your .env file.');
+        throw new Error('Invalid OpenAI API key');
       }
       if (error.status === 429) {
-        throw new Error('OpenAI API rate limit exceeded. Please wait and retry.');
+        throw new Error('OpenAI rate limit exceeded');
       }
       if (error.code === 'insufficient_quota') {
-        throw new Error('OpenAI API quota exceeded. Add credits to your account.');
+        throw new Error('OpenAI quota exceeded');
       }
 
       throw error;
@@ -231,58 +255,81 @@ export class ModelService {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // GEMINI INTEGRATION
+  // GEMINI INTEGRATION - FIXED VERSION
   // ═══════════════════════════════════════════════════════════
+
+
   private async callGemini(
-    model: string,
+    modelId: string,
     prompt: string,
     systemPrompt?: string,
     temperature: number = 0.3,
     maxTokens: number = 2048
   ): Promise<{ content: string; tokenUsage: number }> {
-    logger.info('🤖 Calling Gemini API', { model, temperature, maxTokens });
-
+    logger.info("🔥 GEMINI API HIT", {
+      model: modelId,
+    });
     try {
-      const geminiModel = this.gemini.getGenerativeModel({ model });
+      // Get or create model instance
+      if (!this.geminiModels.has(modelId)) {
+        const modelConfig: any = {
+          model: modelId,
+          generationConfig: {
+            temperature: temperature,
+            maxOutputTokens: maxTokens,
+            topP: 0.95,
+            topK: 40,
+          },
+        };
 
-      // Combine system prompt and user prompt
-      const fullPrompt = systemPrompt
-        ? `${systemPrompt}\n\n${prompt}`
-        : prompt;
+        // Add system instruction if provided
+        if (systemPrompt) {
+          modelConfig.systemInstruction = systemPrompt;
+        }
 
-      const result = await geminiModel.generateContent({
-        contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-        generationConfig: {
-          temperature: temperature,
-          maxOutputTokens: maxTokens,
-        },
-      });
+        const model = this.genAI.getGenerativeModel(modelConfig);
+        this.geminiModels.set(modelId, model);
+      }
 
+      const model = this.geminiModels.get(modelId)!;
+
+      // Generate content
+      const result = await model.generateContent(prompt);
       const response = await result.response;
       const content = response.text();
-      
-      // Gemini doesn't always return token usage, estimate it
-      const tokenUsage = Math.ceil(
-        (fullPrompt.length + content.length) / 4
-      );
 
-      logger.info('✅ Gemini API call successful', {
-        model,
-        estimatedTokens: tokenUsage,
-      });
+      // Try to get token usage
+      let tokenUsage = 0;
+      try {
+        // @ts-ignore - usageMetadata might not be in all versions
+        const usageMetadata = result.response.usageMetadata;
+        if (usageMetadata) {
+          tokenUsage = usageMetadata.totalTokenCount || 0;
+        }
+      } catch (e) {
+        // Estimate tokens if metadata not available
+        tokenUsage = Math.ceil((prompt.length + content.length) / 4);
+      }
 
       return { content, tokenUsage };
     } catch (error: any) {
       logger.error('❌ Gemini API call failed', {
+        model: modelId,
         error: error.message,
-        model,
+        statusCode: error.status,
       });
 
       if (error.message?.includes('API key')) {
-        throw new Error('Invalid Gemini API key. Check your .env file.');
+        throw new Error('Invalid Gemini API key');
       }
       if (error.message?.includes('quota')) {
-        throw new Error('Gemini API quota exceeded.');
+        throw new Error('Gemini quota exceeded');
+      }
+      if (error.message?.includes('safety')) {
+        throw new Error('Gemini safety filters triggered');
+      }
+      if (error.message?.includes('429')) {
+        throw new Error('Gemini rate limit exceeded');
       }
 
       throw error;

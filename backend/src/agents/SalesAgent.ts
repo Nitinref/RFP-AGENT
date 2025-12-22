@@ -3,7 +3,7 @@ import BaseAgent from './base/BaseAgent.js';
 import { AgentInput, AgentOutput } from '../types/agents.types.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
-
+import { safeJsonParse } from "../utils/safeJsonParse.js";
 export class SalesAgent extends BaseAgent {
   constructor() {
     super(AgentType.SALES_SCOUT);
@@ -118,15 +118,28 @@ Consider:
         workflowRunId
       );
 
-      const parsed = JSON.parse(result);
+   const parsed = safeJsonParse(result);
 
-      return {
-        priority: parsed.priority as Priority,
-        strategicValue: parsed.strategicValue,
-        winProbability: parsed.winProbability,
-        recommendations: parsed.recommendations,
-        reasoning: parsed.reasoning,
-      };
+if (!parsed) {
+  logger.warn("Invalid JSON from Gemini in SalesAgent, using defaults");
+
+  return {
+    priority: Priority.MEDIUM,
+    strategicValue: 5,
+    winProbability: 0.5,
+    recommendations: ['Requires detailed technical review'],
+    reasoning: 'AI returned invalid JSON, fallback applied',
+  };
+}
+
+return {
+  priority: parsed.priority as Priority,
+  strategicValue: parsed.strategicValue,
+  winProbability: parsed.winProbability,
+  recommendations: parsed.recommendations,
+  reasoning: parsed.reasoning,
+};
+
     } catch (error) {
   logger.error('RFP analysis failed', {
     message: (error as Error).message,

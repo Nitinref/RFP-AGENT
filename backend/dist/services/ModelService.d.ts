@@ -12,11 +12,13 @@ interface ModelExecutionParams {
 export declare class ModelService {
     private static instance;
     private openai;
-    private gemini;
+    private genAI;
+    private geminiModels;
     private constructor();
     static getInstance(): ModelService;
     execute(params: ModelExecutionParams): Promise<string>;
     private selectModel;
+    private getFallbackConfig;
     private getModelSelectionReason;
     private callOpenAI;
     private callGemini;

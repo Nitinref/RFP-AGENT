@@ -64,9 +64,9 @@ export declare class WorkflowOrchestrator {
             taskType: string | null;
             workflowRunId: string;
             agentActivityId: string;
+            isFallback: boolean;
             primaryModel: string;
             chosenModel: string;
-            isFallback: boolean;
             reason: string;
             decisionFactors: import("@prisma/client/runtime/client.js").JsonValue | null;
             confidence: number | null;

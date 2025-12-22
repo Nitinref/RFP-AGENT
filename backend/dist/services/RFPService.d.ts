@@ -153,6 +153,7 @@ export declare class RFPService {
             analysisVersion: number;
             overallCompliance: number | null;
             criticalGaps: string[];
+            metadata: import("@prisma/client/runtime/client.js").JsonValue | null;
         })[];
         pricingAnalyses: {
             currency: string;

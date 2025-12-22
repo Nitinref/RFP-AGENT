@@ -7,11 +7,15 @@ interface TechnicalAgentInput extends AgentInput {
     };
 }
 export declare class TechnicalAgent extends BaseAgent {
+    private fallbackMetrics;
     constructor();
     protected run(input: TechnicalAgentInput): Promise<AgentOutput>;
-    private extractRequirements;
-    private matchRequirementsToProducts;
+    private extractRequirementsWithFallback;
+    private matchRequirementsToProductsWithFallback;
+    private getFallbackRequirements;
+    private getFallbackMatches;
     private getSampleMatches;
+    private validateNumber;
     private calculateOverallCompliance;
     private identifyCriticalGaps;
     private calculateConfidence;
