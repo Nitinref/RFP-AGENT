@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { WorkflowOrchestrator } from '../../orchestration/WorkflowOrchestrator.js';
-
 const orchestrator = WorkflowOrchestrator.getInstance();
 
 export class WorkflowController {

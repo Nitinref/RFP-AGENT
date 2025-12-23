@@ -5,8 +5,5 @@ export declare class DocumentService {
     }>;
     private saveFile;
     private extractText;
-    private chunkDocument;
-    private isSectionHeader;
-    private detectSectionType;
 }
 export default DocumentService;

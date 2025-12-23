@@ -1,3 +1,5 @@
+import { ReactNode } from "react";
+
 export interface User {
     id: string;
     email: string;
@@ -31,6 +33,9 @@ export interface RFP {
 }
 
 export interface Workflow {
+    triggerType: any;
+    triggerReason: ReactNode;
+    canRetry: any;
     id: string;
     rfpId: string;
     runNumber: number;

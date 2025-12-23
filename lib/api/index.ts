@@ -32,7 +32,6 @@ export const authAPI = {
         await apiClient.post('/auth/logout');
     },
 };
-
 export const rfpAPI = {
     list: async (params?: any): Promise<RFP[]> => {
         const response = await apiClient.get<ApiResponse<RFP[]>>('/rfps', { params });
@@ -62,38 +61,55 @@ export const rfpAPI = {
     },
 
     startWorkflow: async (id: string, reason?: string): Promise<Workflow> => {
-        const response = await apiClient.post<ApiResponse<Workflow>>(`/rfps/${id}/workflow`, { 
-            triggerType: 'MANUAL',
-            triggerReason: reason 
-        });
+        const response = await apiClient.post<ApiResponse<Workflow>>(
+            `/rfps/${id}/workflow`,
+            { triggerType: 'MANUAL', triggerReason: reason }
+        );
         return extractData(response);
     },
 
     getWorkflowStatus: async (id: string): Promise<Workflow> => {
-        const response = await apiClient.get<ApiResponse<Workflow>>(`/rfps/${id}/workflow/status`);
+        const response = await apiClient.get<ApiResponse<Workflow>>(
+            `/rfps/${id}/workflow/status`
+        );
         return extractData(response);
     },
 
     getTechnicalAnalysis: async (id: string): Promise<TechnicalAnalysis> => {
-        const response = await apiClient.get<ApiResponse<TechnicalAnalysis>>(`/rfps/${id}/technical-analysis`);
+        const response = await apiClient.get<ApiResponse<TechnicalAnalysis>>(
+            `/rfps/${id}/technical-analysis`
+        );
         return extractData(response);
     },
 
     getPricingAnalysis: async (id: string): Promise<PricingAnalysis> => {
-        const response = await apiClient.get<ApiResponse<PricingAnalysis>>(`/rfps/${id}/pricing-analysis`);
+        const response = await apiClient.get<ApiResponse<PricingAnalysis>>(
+            `/rfps/${id}/pricing-analysis`
+        );
+        return extractData(response);
+    },
+
+    // ✅ THIS WAS MISSING
+    getReport: async (id: string): Promise<any> => {
+        const response = await apiClient.get<ApiResponse<any>>(
+            `/rfps/${id}/report`
+        );
         return extractData(response);
     },
 
     uploadDocument: async (id: string, file: File): Promise<any> => {
         const formData = new FormData();
         formData.append('file', file);
-        
-        const response = await apiClient.post<ApiResponse<any>>(`/rfps/${id}/document`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-        });
+
+        const response = await apiClient.post<ApiResponse<any>>(
+            `/rfps/${id}/document`,
+            formData,
+            { headers: { 'Content-Type': 'multipart/form-data' } }
+        );
         return extractData(response);
     },
 };
+
 
 export const analyticsAPI = {
     getDashboardData: async (): Promise<AnalyticsData> => {

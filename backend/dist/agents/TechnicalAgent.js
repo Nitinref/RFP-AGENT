@@ -1,4 +1,5 @@
 import { AgentType, Complexity, RequirementCategory } from '@prisma/client';
+import { ragService } from '../services/RAGService.js';
 import BaseAgent from './base/BaseAgent.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
@@ -39,9 +40,13 @@ export class TechnicalAgent extends BaseAgent {
             if (!rfp) {
                 throw new Error(`RFP ${input.context.rfpId} not found`);
             }
+            const relevantChunkIds = await ragService.searchRFPChunks(input.context.rfpId, 'technical requirements and specifications');
+            const relevantChunks = await prisma.rFPDocumentChunk.findMany({
+                where: { id: { in: relevantChunkIds } }
+            });
             let requirements = rfp.requirements;
             if (requirements.length === 0) {
-                const extractionResult = await this.extractRequirementsWithFallback(rfp, input.context.workflowRunId);
+                const extractionResult = await this.extractRequirementsWithFallback(rfp, input.context.workflowRunId, relevantChunks);
                 requirements = extractionResult.requirements;
                 this.fallbackMetrics.extractionUsedFallback = extractionResult.usedFallback;
                 this.fallbackMetrics.extractionFallbackReason = extractionResult.fallbackReason;
@@ -127,8 +132,10 @@ export class TechnicalAgent extends BaseAgent {
         }
     }
     // ---------------- REQUIREMENT EXTRACTION WITH FALLBACK ----------------
-    async extractRequirementsWithFallback(rfp, workflowRunId) {
-        const content = rfp.documentChunks.map((c) => c.content).join('\n\n');
+    async extractRequirementsWithFallback(rfp, workflowRunId, relevantChunks) {
+        const content = relevantChunks
+            .map(c => c.content)
+            .join('\n\n');
         const prompt = `
 Analyze the following RFP document and extract all technical requirements.
 

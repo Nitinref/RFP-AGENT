@@ -1,4 +1,5 @@
 import { AgentType, Complexity, RequirementCategory } from '@prisma/client';
+import { ragService } from '../services/RAGService.js';
 import BaseAgent from './base/BaseAgent.js';
 import { AgentInput, AgentOutput } from '../types/agents.types.js';
 import { SKUMatchResult } from '../types/rfp.types.js';
@@ -47,6 +48,7 @@ export class TechnicalAgent extends BaseAgent {
 
     try {
       const rfp = await prisma.rFP.findUnique({
+
         where: { id: input.context.rfpId },
         include: {
           requirements: true,
@@ -62,9 +64,20 @@ export class TechnicalAgent extends BaseAgent {
         throw new Error(`RFP ${input.context.rfpId} not found`);
       }
 
+      const relevantChunkIds = await ragService.searchRFPChunks(
+        input.context.rfpId,
+        'technical requirements and specifications'
+      );
+
+      const relevantChunks = await prisma.rFPDocumentChunk.findMany({
+        where: { id: { in: relevantChunkIds } }
+      });
+
+
       let requirements = rfp.requirements;
       if (requirements.length === 0) {
-        const extractionResult = await this.extractRequirementsWithFallback(rfp, input.context.workflowRunId);
+        const extractionResult = await this.extractRequirementsWithFallback(rfp, input.context.workflowRunId, relevantChunks
+        );
         requirements = extractionResult.requirements;
         this.fallbackMetrics.extractionUsedFallback = extractionResult.usedFallback;
         this.fallbackMetrics.extractionFallbackReason = extractionResult.fallbackReason;
@@ -164,10 +177,14 @@ export class TechnicalAgent extends BaseAgent {
   // ---------------- REQUIREMENT EXTRACTION WITH FALLBACK ----------------
 
   private async extractRequirementsWithFallback(
-    rfp: any, 
-    workflowRunId: string
+    rfp: any,
+    workflowRunId: string,
+    relevantChunks: any[],
   ): Promise<{ requirements: any[]; usedFallback: boolean; fallbackReason: string | null }> {
-    const content = rfp.documentChunks.map((c: any) => c.content).join('\n\n');
+    const content = relevantChunks
+      .map(c => c.content)
+      .join('\n\n');
+
 
     const prompt = `
 Analyze the following RFP document and extract all technical requirements.
@@ -227,10 +244,10 @@ Return ONLY a valid JSON array:
       },
       fallbackCall: async () => {
         logger.warn('Using fallback for requirement extraction', { rfpId: rfp.id });
-        
+
         // Fallback: Use a simpler, more deterministic extraction
         const fallbackRequirements = this.getFallbackRequirements(rfp);
-        
+
         return {
           result: fallbackRequirements,
           confidence: 0.6, // Lower confidence for fallback
@@ -371,7 +388,7 @@ NEVER return an empty array. Return at least one match.
         }));
 
         const topMatchScore = validatedMatches[0]?.matchScore || 0;
-        
+
         return {
           result: validatedMatches,
           confidence: topMatchScore / 100,
@@ -384,7 +401,7 @@ NEVER return an empty array. Return at least one match.
         });
 
         const fallbackMatches = this.getFallbackMatches(requirements, products);
-        
+
         return {
           result: fallbackMatches,
           confidence: 0.6, // Lower confidence for fallback
@@ -419,7 +436,7 @@ NEVER return an empty array. Return at least one match.
   private getFallbackRequirements(rfp: any): any[] {
     // Simple fallback: extract key phrases from document
     const content = rfp.documentChunks.map((c: any) => c.content).join('\n\n');
-    
+
     // Look for common requirement indicators
     const requirementIndicators = [
       'must', 'shall', 'required', 'need', 'necessary',
@@ -484,7 +501,7 @@ NEVER return an empty array. Return at least one match.
       justification: 'Fallback matching due to primary model limitations',
       confidence: 0.6 - (index * 0.1),
     }));
-// @ts-ignore
+    // @ts-ignore
     return fallbackMatches;
   }
 
@@ -564,28 +581,28 @@ NEVER return an empty array. Return at least one match.
     if (!matches || matches.length === 0) {
       return ['No suitable products found'];
     }
-    
+
     const top = matches[0];
     const gaps = Array.isArray(top.gaps) ? top.gaps : [];
-    
+
     if (top.matchScore < 70) {
       return ['Low compliance: Match score below 70%', ...gaps];
     }
-    
+
     return gaps.length > 0 ? gaps : ['No critical gaps identified'];
   }
 
   private calculateConfidence(matches: SKUMatchResult[]): number {
     if (!matches || matches.length === 0) return 0;
-    
+
     let confidence = matches[0].matchScore / 100;
-    
+
     const gaps = Array.isArray(matches[0].gaps) ? matches[0].gaps : [];
     const risks = Array.isArray(matches[0].risks) ? matches[0].risks : [];
-    
+
     if (gaps.length > 0) confidence *= 0.9;
     if (risks.length > 0) confidence *= 0.95;
-    
+
     return Math.max(0, Math.min(1, confidence));
   }
 }

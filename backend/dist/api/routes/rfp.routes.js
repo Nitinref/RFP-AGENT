@@ -35,5 +35,10 @@ router.get('/:id/workflow/status', asyncHandler(controller.getWorkflowStatus));
 router.get('/:id/technical-analysis', asyncHandler(controller.getTechnicalAnalysis));
 router.get('/:id/pricing-analysis', asyncHandler(controller.getPricingAnalysis));
 router.get('/:id/response', asyncHandler(controller.getResponse));
+router.get('/:id/report', controller.getReport.bind(controller));
+// auth baad me
+router.use(authenticate);
+router.get('/:id/report', asyncHandler(controller.getReport));
+router.get('/:id/report/pdf', asyncHandler(controller.downloadReportPDF));
 export default router;
 //# sourceMappingURL=rfp.routes.js.map

@@ -64,6 +64,7 @@ model RFP {
   @@index([submissionDeadline])
   @@index([industry])
   @@index([receivedAt])
+  rfpreports RFPReport[]
 }
 
 model RFPRequirement {
@@ -141,6 +142,7 @@ model WorkflowRun {
   @@index([rfpId, status])
   @@index([triggerType])
   @@index([startedAt])
+  rfpreports RFPReport[]
 }
 
 model RFPDocumentChunk {
@@ -523,6 +525,27 @@ model User {
 
   @@index([email])
   @@index([role, isActive])
+}
+
+model RFPReport {
+  id            String   @id @default(cuid())
+
+  rfpId         String
+  workflowRunId String
+
+  summary           String?
+  technicalAnalysis Json?
+  pricingAnalysis   Json?
+  finalResponse     String?
+
+  generatedAt DateTime @default(now())
+
+  // ✅ Relations
+  rfp         RFP         @relation(fields: [rfpId], references: [id], onDelete: Cascade)
+  workflowRun WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  @@index([rfpId])
+  @@index([workflowRunId])
 }
 
 // ════════════════════════════════════════════════════════

@@ -1,48 +1,60 @@
-import { RequirementCategory } from '@prisma/client';
 import { prisma } from "../prisma/index.js";
-import { logger } from '../utils/logger.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import config from '../config/environment.js';
-import { sanitizeFilename, generateUniqueId } from '../utils/helpers.js';
+import { logger } from "../utils/logger.js";
+import * as fs from "fs/promises";
+import * as path from "path";
+import config from "../config/environment.js";
+import { sanitizeFilename, generateUniqueId } from "../utils/helpers.js";
+import mammoth from "mammoth";
+import { openaiChunk } from "./OpenAIChunkingService.js";
+// silence pdfjs font warning
+process.env.PDFJS_DISABLE_FONT_FACE = "true";
 export class DocumentService {
     async processDocument(rfpId, file) {
-        logger.info('Processing document', { rfpId, filename: file.originalname });
+        logger.info("Processing document", { rfpId, filename: file.originalname });
         try {
+            // 1️⃣ Save file
             const savedPath = await this.saveFile(file);
-            const content = await this.extractText(file);
-            const chunks = this.chunkDocument(content);
-            const documentChunks = await Promise.all(chunks.map((chunk, index) => prisma.rFPDocumentChunk.create({
-                data: {
+            // 2️⃣ Extract text
+            const text = await this.extractText(file);
+            // 3️⃣ ✅ OpenAI semantic chunking
+            const chunks = await openaiChunk(text);
+            if (!chunks.length) {
+                throw new Error("No chunks returned by OpenAI");
+            }
+            // 4️⃣ Save chunks
+            await prisma.rFPDocumentChunk.createMany({
+                data: chunks.map((chunk, index) => ({
                     rfpId,
                     chunkIndex: index,
-                    section: chunk.section,
-                    sectionType: this.detectSectionType(chunk.section),
+                    section: chunk.title,
+                    sectionType: chunk.category.toUpperCase(),
                     content: chunk.content,
                     wordCount: chunk.content.split(/\s+/).length,
-                },
-            })));
+                })),
+            });
+            // 5️⃣ Update RFP
             await prisma.rFP.update({
                 where: { id: rfpId },
                 data: {
                     originalDocument: savedPath,
-                    status: 'ANALYZING',
+                    status: "ANALYZING",
                 },
             });
-            logger.info('Document processed successfully', {
+            logger.info("Document processed successfully", {
                 rfpId,
-                chunksCreated: documentChunks.length,
+                chunksCreated: chunks.length,
             });
             return {
                 path: savedPath,
-                chunksCreated: documentChunks.length,
+                chunksCreated: chunks.length,
             };
         }
         catch (error) {
-            logger.error('Document processing failed', { error, rfpId });
+            logger.error("Document processing failed", { error, rfpId });
             throw error;
         }
     }
+    // ---------------- HELPERS ----------------
     async saveFile(file) {
         const uploadDir = config.upload.uploadDir;
         await fs.mkdir(uploadDir, { recursive: true });
@@ -52,56 +64,29 @@ export class DocumentService {
         return filepath;
     }
     async extractText(file) {
-        // Placeholder - integrate with PDF/DOCX parsing libraries
-        // Use libraries like pdf-parse, mammoth, or textract
-        const content = file.buffer.toString('utf-8');
-        return content;
-    }
-    chunkDocument(content) {
-        const sections = content.split(/\n\n+/);
-        const chunks = [];
-        let currentSection = 'Introduction';
-        for (const section of sections) {
-            if (section.trim().length < 50)
-                continue;
-            if (this.isSectionHeader(section)) {
-                currentSection = section.trim();
-                continue;
-            }
-            chunks.push({
-                section: currentSection,
-                content: section.trim(),
+        if (file.mimetype === "application/pdf") {
+            const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+            const loadingTask = pdfjs.getDocument({
+                data: new Uint8Array(file.buffer),
             });
+            const pdf = await loadingTask.promise;
+            let fullText = "";
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                fullText += content.items.map((i) => i.str).join(" ") + "\n\n";
+            }
+            return fullText.trim();
         }
-        return chunks;
-    }
-    isSectionHeader(text) {
-        const headerPatterns = [
-            /^[A-Z\s]{3,}$/,
-            /^\d+\.\s+[A-Z]/,
-            /^SECTION\s+\d+/i,
-            /^PART\s+[A-Z]/i,
-        ];
-        return headerPatterns.some(pattern => pattern.test(text.trim()));
-    }
-    detectSectionType(sectionName) {
-        const lowerSection = sectionName.toLowerCase();
-        if (lowerSection.includes('technical') || lowerSection.includes('specification')) {
-            return RequirementCategory.TECHNICAL;
+        if (file.mimetype ===
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+            const result = await mammoth.extractRawText({ buffer: file.buffer });
+            return result.value.trim();
         }
-        if (lowerSection.includes('test') || lowerSection.includes('quality')) {
-            return RequirementCategory.TESTING;
+        if (file.mimetype === "text/plain") {
+            return file.buffer.toString("utf-8").trim();
         }
-        if (lowerSection.includes('compliance') || lowerSection.includes('certification')) {
-            return RequirementCategory.COMPLIANCE;
-        }
-        if (lowerSection.includes('commercial') || lowerSection.includes('price')) {
-            return RequirementCategory.COMMERCIAL;
-        }
-        if (lowerSection.includes('delivery') || lowerSection.includes('logistics')) {
-            return RequirementCategory.LOGISTICS;
-        }
-        return RequirementCategory.OTHER;
+        throw new Error("Unsupported document type");
     }
 }
 export default DocumentService;

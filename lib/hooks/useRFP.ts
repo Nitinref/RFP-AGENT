@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+// lib/hooks/useRFP.ts
 import { rfpAPI } from '../api';
+
+
 import { toast } from 'sonner';
 
 /* -------------------- List RFPs -------------------- */
@@ -102,3 +105,13 @@ export const usePricingAnalysis = (id?: string) => {
     retry: false,
   });
 };
+/* -------------------- RFP Report -------------------- */
+export const useRFPReport = (id?: string) => {
+  return useQuery({
+    queryKey: ['rfp-report', id],
+    queryFn: () => rfpAPI.getReport(id!),
+    enabled: !!id,
+    retry: false,
+  });
+};
+

@@ -6,6 +6,8 @@ import PricingAgent from './PricingAgent.js';
 import { prisma } from "../prisma/index.js";
 import { logger } from '../utils/logger.js';
 import { safeJsonParse } from "../utils/safeJsonParse.js";
+import { ReportService } from "../services/RFPReportService.js";
+const reportService = new ReportService();
 export class OrchestratorAgent extends BaseAgent {
     salesAgent;
     technicalAgent;
@@ -60,6 +62,21 @@ export class OrchestratorAgent extends BaseAgent {
             // Step 4: Generate Final Response
             // ─────────────────────────────────────────────
             const finalResponse = await this.generateFinalResponse(input.context.rfpId, salesResult.data, technicalResult.data, pricingResult.data, input.context.workflowRunId);
+            logger.info("📄 About to generate RFP report", {
+                rfpId: input.context.rfpId,
+                workflowRunId: input.context.workflowRunId,
+            });
+            await reportService.generateReport({
+                rfpId: input.context.rfpId,
+                workflowRunId: input.context.workflowRunId,
+                technicalAnalysis: technicalResult.data,
+                pricingAnalysis: pricingResult.data,
+                finalResponse: finalResponse.executiveSummary ??
+                    JSON.stringify(finalResponse),
+            });
+            logger.info("✅ RFP report generated successfully", {
+                rfpId: input.context.rfpId,
+            });
             logger.info('Orchestrator Agent: Workflow completed successfully', {
                 rfpId: input.context.rfpId,
                 responseId: finalResponse.id,
@@ -117,13 +134,23 @@ export class OrchestratorAgent extends BaseAgent {
             throw new Error(`RFP ${rfpId} not found`);
         }
         const prompt = `
-You are an enterprise RFP response writer. Generate a professional, submission-ready RFP response.
+SYSTEM RULES (VERY IMPORTANT):
+- You MUST return ONLY raw JSON
+- Do NOT use markdown
+- Do NOT use \`\`\`
+- Do NOT add explanations
+- If JSON is invalid → this is a FAILURE
+
+You are an enterprise RFP response writer.
+Generate a professional, submission-ready RFP response.
 
 RFP DETAILS:
-- Number: ${rfp.rfpNumber}
-- Title: ${rfp.title}
-- Issuer: ${rfp.issuer}
-- Industry: ${rfp.industry}
+${JSON.stringify({
+            rfpNumber: rfp.rfpNumber,
+            title: rfp.title,
+            issuer: rfp.issuer,
+            industry: rfp.industry
+        }, null, 2)}
 
 SALES ANALYSIS:
 ${JSON.stringify(salesData, null, 2)}
@@ -134,14 +161,15 @@ ${JSON.stringify(technicalData, null, 2)}
 PRICING ANALYSIS:
 ${JSON.stringify(pricingData, null, 2)}
 
-Return ONLY valid JSON:
+STRICT OUTPUT FORMAT (JSON ONLY):
+
 {
   "executiveSummary": "string",
   "complianceStatement": "string",
   "deliveryTimeline": "string",
   "paymentTerms": "string",
-  "validityPeriod": number,
-  "keyHighlights": ["highlight1", "highlight2"]
+  "validityPeriod": 30,
+  "keyHighlights": ["string"]
 }
 `;
         const result = await this.executeModel(prompt, 'response_generation', Complexity.HIGH, 'You are an expert B2B proposal writer.', 0.4, 2048, workflowRunId);

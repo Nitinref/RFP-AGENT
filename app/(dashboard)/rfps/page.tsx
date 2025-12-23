@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useRFPs } from '@/lib/hooks/useRFP';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -30,8 +30,9 @@ import {
   Edit
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { formatDate, formatCurrency, formatRelativeTime } from '@/lib/utils/formatters';
-import { RFP_STATUS_COLORS, PRIORITY_COLORS } from '@/lib/utils/constants';
+import React from 'react';
 
 // Create enhanced Select component
 const Select = ({ value, onChange, children, icon: Icon, ...props }: any) => (
@@ -111,6 +112,131 @@ const StatsCard = ({ title, value, icon: Icon, trend, color }: any) => (
   </Card>
 );
 
+// Memoized RFP Card component to prevent unnecessary re-renders
+const RFPListItem = React.memo(({ 
+  rfp, 
+  viewMode,
+  onViewClick 
+}: { 
+  rfp: any; 
+  viewMode: 'grid' | 'list';
+  onViewClick: (id: string) => void;
+}) => {
+  return (
+    <Card 
+      className={`
+        hover:shadow-xl transition-all duration-300 border-gray-200 
+        ${viewMode === 'list' ? 'flex flex-col lg:flex-row lg:items-center' : ''}
+        hover:border-blue-200 hover:translate-y-[-2px]
+      `}
+    >
+      <CardHeader className={viewMode === 'list' ? 'lg:w-2/5' : ''}>
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText className="h-4 w-4 text-gray-400" />
+              <span className="text-sm font-mono text-gray-500">{rfp.rfpNumber}</span>
+            </div>
+            <CardTitle className="text-lg font-bold mb-2 line-clamp-1">
+              {rfp.title}
+            </CardTitle>
+            <div className="flex items-center gap-3">
+              <StatusBadge status={rfp.status} />
+              <PriorityIndicator priority={rfp.priority} />
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className={viewMode === 'list' ? 'lg:w-2/5' : ''}>
+        <div className="space-y-4">
+          <div className="flex items-center text-sm">
+            <Building2 className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
+            <span className="font-medium text-gray-700">{rfp.issuer}</span>
+          </div>
+
+          <div className="flex items-center text-sm">
+            <Calendar className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
+            <div>
+              <span className="font-medium text-gray-700">Due: </span>
+              <span>{formatDate(rfp.submissionDeadline)}</span>
+              <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
+                new Date(rfp.submissionDeadline) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
+                  ? 'bg-red-100 text-red-800'
+                  : 'bg-gray-100 text-gray-800'
+              }`}>
+                {formatRelativeTime(rfp.submissionDeadline)}
+              </span>
+            </div>
+          </div>
+
+          {rfp.estimatedValue && (
+            <div className="flex items-center text-sm">
+              <DollarSign className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
+              <span className="font-semibold text-gray-900">
+                {formatCurrency(rfp.estimatedValue, rfp.currency)}
+              </span>
+            </div>
+          )}
+
+          {rfp.tags && rfp.tags.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {rfp.tags.map((tag: string, index: number) => (
+                <Badge 
+                  key={`${tag}-${index}`} 
+                  variant="outline" 
+                  className="text-xs border-gray-200"
+                >
+                  {tag}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+
+      <CardFooter className={`
+        ${viewMode === 'list' ? 'lg:w-1/5 lg:justify-end' : ''}
+        border-t pt-4 mt-4
+      `}>
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-2">
+            {rfp.assignedTo && (
+              <div className="flex -space-x-2">
+                <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center">
+                  <Users className="h-4 w-4 text-blue-600" />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Link 
+              href={`/rfps/${rfp.id}/edit`}
+              prefetch={false} // Disable prefetching for edit links
+            >
+              <Button variant="ghost" size="sm" className="gap-1">
+                <Edit className="h-3 w-3" />
+              </Button>
+            </Link>
+            <Button 
+              size="sm" 
+              className="gap-2"
+              onClick={() => onViewClick(rfp.id)}
+            >
+              <Eye className="h-3 w-3" />
+              View
+              <ArrowRight className="h-3 w-3" />
+            </Button>
+          </div>
+        </div>
+      </CardFooter>
+    </Card>
+  );
+});
+
+RFPListItem.displayName = 'RFPListItem';
+
+// Main component
 export default function RFPsPage() {
   const [filters, setFilters] = useState({
     status: '',
@@ -118,8 +244,17 @@ export default function RFPsPage() {
     search: '',
   });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [isNavigating, setIsNavigating] = useState<string | null>(null);
+  const router = useRouter();
 
   const { data: rfps = [], isLoading, error } = useRFPs(filters);
+
+  // Memoized navigation handler
+  const handleViewClick = useCallback((id: string) => {
+    setIsNavigating(id);
+    // Use router.push instead of Link for better control
+    router.push(`/rfps/${id}`);
+  }, [router]);
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -159,7 +294,7 @@ export default function RFPsPage() {
               <Download className="h-4 w-4" />
               Export
             </Button>
-            <Link href="/rfps/new">
+            <Link href="/rfps/new" prefetch={false}>
               <Button className="gap-2 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800">
                 <Plus className="h-4 w-4" />
                 New RFP
@@ -374,110 +509,18 @@ export default function RFPsPage() {
               : "space-y-4"
             }>
               {rfps.map((rfp: any) => (
-                <Card 
-                  key={rfp.id} 
-                  className={`
-                    hover:shadow-xl transition-all duration-300 border-gray-200 
-                    ${viewMode === 'list' ? 'flex flex-col lg:flex-row lg:items-center' : ''}
-                    hover:border-blue-200 hover:translate-y-[-2px]
-                  `}
-                >
-                  <CardHeader className={viewMode === 'list' ? 'lg:w-2/5' : ''}>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <FileText className="h-4 w-4 text-gray-400" />
-                          <span className="text-sm font-mono text-gray-500">{rfp.rfpNumber}</span>
-                        </div>
-                        <CardTitle className="text-lg font-bold mb-2 line-clamp-1">
-                          {rfp.title}
-                        </CardTitle>
-                        <div className="flex items-center gap-3">
-                          <StatusBadge status={rfp.status} />
-                          <PriorityIndicator priority={rfp.priority} />
-                        </div>
-                      </div>
+                <div key={rfp.id} className="relative">
+                  {isNavigating === rfp.id && (
+                    <div className="absolute inset-0 bg-white/80 flex items-center justify-center z-10 rounded-lg">
+                      <LoadingSpinner size="sm" />
                     </div>
-                  </CardHeader>
-
-                  <CardContent className={viewMode === 'list' ? 'lg:w-2/5' : ''}>
-                    <div className="space-y-4">
-                      <div className="flex items-center text-sm">
-                        <Building2 className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
-                        <span className="font-medium text-gray-700">{rfp.issuer}</span>
-                      </div>
-
-                      <div className="flex items-center text-sm">
-                        <Calendar className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
-                        <div>
-                          <span className="font-medium text-gray-700">Due: </span>
-                          <span>{formatDate(rfp.submissionDeadline)}</span>
-                          <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
-                            new Date(rfp.submissionDeadline) < new Date(Date.now() + 3 * 24 * 60 * 60 * 1000)
-                              ? 'bg-red-100 text-red-800'
-                              : 'bg-gray-100 text-gray-800'
-                          }`}>
-                            {formatRelativeTime(rfp.submissionDeadline)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {rfp.estimatedValue && (
-                        <div className="flex items-center text-sm">
-                          <DollarSign className="h-4 w-4 mr-2 text-gray-400 flex-shrink-0" />
-                          <span className="font-semibold text-gray-900">
-                            {formatCurrency(rfp.estimatedValue, rfp.currency)}
-                          </span>
-                        </div>
-                      )}
-
-                      {rfp.tags && rfp.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {rfp.tags.map((tag: string, index: number) => (
-                            <Badge 
-                              key={`${tag}-${index}`} 
-                              variant="outline" 
-                              className="text-xs border-gray-200"
-                            >
-                              {tag}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-
-                  <CardFooter className={`
-                    ${viewMode === 'list' ? 'lg:w-1/5 lg:justify-end' : ''}
-                    border-t pt-4 mt-4
-                  `}>
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-2">
-                        {rfp.assignedTo && (
-                          <div className="flex -space-x-2">
-                            <div className="w-8 h-8 rounded-full bg-blue-100 border-2 border-white flex items-center justify-center">
-                              <Users className="h-4 w-4 text-blue-600" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Link href={`/rfps/${rfp.id}/edit`}>
-                          <Button variant="ghost" size="sm" className="gap-1">
-                            <Edit className="h-3 w-3" />
-                          </Button>
-                        </Link>
-                        <Link href={`/rfps/${rfp.id}`}>
-                          <Button size="sm" className="gap-2">
-                            <Eye className="h-3 w-3" />
-                            View
-                            <ArrowRight className="h-3 w-3" />
-                          </Button>
-                        </Link>
-                      </div>
-                    </div>
-                  </CardFooter>
-                </Card>
+                  )}
+                  <RFPListItem 
+                    rfp={rfp} 
+                    viewMode={viewMode}
+                    onViewClick={handleViewClick}
+                  />
+                </div>
               ))}
             </div>
           </>
@@ -488,7 +531,7 @@ export default function RFPsPage() {
               ? "Try adjusting your filters to see more results" 
               : "Get started by creating your first RFP"
             }
-             // @ts-ignore
+            // @ts-ignore
             icon={FileText}
             iconClassName="text-gray-400"
             action={
@@ -497,7 +540,7 @@ export default function RFPsPage() {
                   Clear Filters
                 </Button>
               ) : (
-                <Link href="/rfps/new">
+                <Link href="/rfps/new" prefetch={false}>
                   <Button className="gap-2">
                     <Plus className="h-4 w-4" />
                     Create RFP

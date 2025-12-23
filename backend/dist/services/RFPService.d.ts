@@ -93,9 +93,9 @@ export declare class RFPService {
             rfpId: string;
             unit: string | null;
             section: string;
-            specification: string | null;
             category: import(".prisma/client").$Enums.RequirementCategory;
             requirement: string;
+            specification: string | null;
             isMandatory: boolean;
             quantity: number | null;
             technicalParams: import("@prisma/client/runtime/client.js").JsonValue | null;
@@ -227,10 +227,10 @@ export declare class RFPService {
             id: string;
             createdAt: Date;
             rfpId: string;
+            content: string;
+            sectionType: import(".prisma/client").$Enums.RequirementCategory | null;
             chunkIndex: number;
             section: string | null;
-            sectionType: import(".prisma/client").$Enums.RequirementCategory | null;
-            content: string;
             wordCount: number | null;
             embedding: import("@prisma/client/runtime/client.js").JsonValue | null;
             embeddingModel: string | null;

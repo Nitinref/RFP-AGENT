@@ -5,11 +5,17 @@ import { WorkflowOrchestrator } from '../../orchestration/WorkflowOrchestrator.j
 import { logger } from '../../utils/logger.js';
 import { NotFoundError, ValidationError } from '../../utils/errors.js';
 import { TriggerType } from '@prisma/client';
+import { rfpIngestionService } from '../../services/RFPIngestionService.js';
+import { prisma } from '../../prisma/index.js';
+import { RFPReportPDFService } from "../../services/RFPReportPDFService.js";
 const rfpService = new RFPService();
 const documentService = new DocumentService();
 const orchestrator = WorkflowOrchestrator.getInstance();
-
+const pdfService = new RFPReportPDFService();
 export class RFPController {
+  // =========================
+  // CREATE RFP
+  // =========================
   async create(req: Request, res: Response) {
     const data = req.body;
     const rfp = await rfpService.createRFP(data);
@@ -20,6 +26,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // LIST RFPs
+  // =========================
   async list(req: Request, res: Response) {
     const { status, priority, industry, limit, offset } = req.query;
 
@@ -42,6 +51,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // GET RFP BY ID
+  // =========================
   async getById(req: Request, res: Response) {
     const { id } = req.params;
     const rfp = await rfpService.getRFPById(id);
@@ -52,6 +64,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // UPDATE RFP STATUS
+  // =========================
   async update(req: Request, res: Response) {
     const { id } = req.params;
     const data = req.body;
@@ -64,6 +79,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // DELETE RFP
+  // =========================
   async delete(req: Request, res: Response) {
     const { id } = req.params;
     await rfpService.deleteRFP(id);
@@ -74,6 +92,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // UPLOAD DOCUMENT + INGEST
+  // =========================
   async uploadDocument(req: Request, res: Response) {
     const { id } = req.params;
     const file = req.file;
@@ -82,7 +103,11 @@ export class RFPController {
       throw new ValidationError('No file uploaded');
     }
 
+    // 1️⃣ Process + chunk document
     const result = await documentService.processDocument(id, file);
+
+    // 2️⃣ Ingest into vector DB (Qdrant)
+    await rfpIngestionService.ingestRFP(id);
 
     res.json({
       success: true,
@@ -90,6 +115,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // START WORKFLOW
+  // =========================
   async startWorkflow(req: Request, res: Response) {
     const { id } = req.params;
     const { triggerType, triggerReason } = req.body;
@@ -107,11 +135,14 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // WORKFLOW STATUS
+  // =========================
   async getWorkflowStatus(req: Request, res: Response) {
     const { id } = req.params;
 
     const rfp = await rfpService.getRFPById(id);
-    
+
     if (!rfp.workflowRuns || rfp.workflowRuns.length === 0) {
       throw new NotFoundError('No workflow runs found');
     }
@@ -125,6 +156,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // TECHNICAL ANALYSIS
+  // =========================
   async getTechnicalAnalysis(req: Request, res: Response) {
     const { id } = req.params;
     const rfp = await rfpService.getRFPById(id);
@@ -139,6 +173,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // PRICING ANALYSIS
+  // =========================
   async getPricingAnalysis(req: Request, res: Response) {
     const { id } = req.params;
     const rfp = await rfpService.getRFPById(id);
@@ -153,6 +190,9 @@ export class RFPController {
     });
   }
 
+  // =========================
+  // FINAL RESPONSE
+  // =========================
   async getResponse(req: Request, res: Response) {
     const { id } = req.params;
     const rfp = await rfpService.getRFPById(id);
@@ -166,4 +206,42 @@ export class RFPController {
       data: rfp.responses[0],
     });
   }
+
+  // =========================
+  // 🔥 FINAL RFP REPORT (IMPORTANT)
+  // =========================
+  async getReport(req: Request, res: Response) {
+    const { id } = req.params;
+
+    const report = await prisma.rFPReport.findFirst({
+      where: { rfpId: id },
+      orderBy: { generatedAt: 'desc' },
+    });
+
+    if (!report) {
+      throw new NotFoundError('Report not generated yet');
+    }
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  }
+
+async downloadReportPDF(req: Request, res: Response) {
+  const { id } = req.params;
+
+  const pdfBuffer = await pdfService.generatePDF(id);
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader(
+    "Content-Disposition",
+    `inline; filename=RFP-${id}.pdf`
+  );
+
+  res.status(200).send(pdfBuffer);
 }
+
+}
+

@@ -12,6 +12,7 @@ const extractData = <T>(response: any): T => {
 };
 
 export const rfpAPI = {
+  
   list: async (params?: any): Promise<RFP[]> => {
     const response = await apiClient.get<ApiResponse<RFP[]>>('/rfps', { params });
     return extractData<RFP[]>(response);
@@ -68,4 +69,18 @@ export const rfpAPI = {
     });
     return extractData<any>(response);
   },
+   getReport: async (id: string): Promise<any> => {
+    const response = await apiClient.get<ApiResponse<any>>(
+      `/rfps/${id}/report`
+    );
+    return extractData<any>(response);
+  },
+ getReportPDF: async (id: string) => {
+  const response = await apiClient.get(
+    `/rfps/${id}/report/pdf`,
+    { responseType: "blob" }
+  );
+  return response;
+},
+
 };

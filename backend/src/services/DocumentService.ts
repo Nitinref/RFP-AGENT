@@ -1,59 +1,71 @@
-import { RequirementCategory } from '@prisma/client';
+import { RequirementCategory } from "@prisma/client";
 import { prisma } from "../prisma/index.js";
-import { logger } from '../utils/logger.js';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-import config from '../config/environment.js';
-import { sanitizeFilename, generateUniqueId } from '../utils/helpers.js';
+import { logger } from "../utils/logger.js";
+import * as fs from "fs/promises";
+import * as path from "path";
+import config from "../config/environment.js";
+import { sanitizeFilename, generateUniqueId } from "../utils/helpers.js";
+import mammoth from "mammoth";
+import { openaiChunk } from "./OpenAIChunkingService.js";
+
+// silence pdfjs font warning
+process.env.PDFJS_DISABLE_FONT_FACE = "true";
 
 export class DocumentService {
   async processDocument(rfpId: string, file: Express.Multer.File) {
-    logger.info('Processing document', { rfpId, filename: file.originalname });
+    logger.info("Processing document", { rfpId, filename: file.originalname });
 
     try {
+      // 1️⃣ Save file
       const savedPath = await this.saveFile(file);
 
-      const content = await this.extractText(file);
+      // 2️⃣ Extract text
+      const text = await this.extractText(file);
 
-      const chunks = this.chunkDocument(content);
+      // 3️⃣ ✅ OpenAI semantic chunking
+      const chunks = await openaiChunk(text);
 
-      const documentChunks = await Promise.all(
-        chunks.map((chunk, index) =>
-          prisma.rFPDocumentChunk.create({
-            data: {
-              rfpId,
-              chunkIndex: index,
-              section: chunk.section,
-              sectionType: this.detectSectionType(chunk.section),
-              content: chunk.content,
-              wordCount: chunk.content.split(/\s+/).length,
-            },
-          })
-        )
-      );
+      if (!chunks.length) {
+        throw new Error("No chunks returned by OpenAI");
+      }
 
+      // 4️⃣ Save chunks
+      await prisma.rFPDocumentChunk.createMany({
+        data: chunks.map((chunk, index) => ({
+          rfpId,
+          chunkIndex: index,
+          section: chunk.title,
+          sectionType: chunk.category.toUpperCase() as RequirementCategory,
+          content: chunk.content,
+          wordCount: chunk.content.split(/\s+/).length,
+        })),
+      });
+
+      // 5️⃣ Update RFP
       await prisma.rFP.update({
         where: { id: rfpId },
         data: {
           originalDocument: savedPath,
-          status: 'ANALYZING',
+          status: "ANALYZING",
         },
       });
 
-      logger.info('Document processed successfully', {
+      logger.info("Document processed successfully", {
         rfpId,
-        chunksCreated: documentChunks.length,
+        chunksCreated: chunks.length,
       });
 
       return {
         path: savedPath,
-        chunksCreated: documentChunks.length,
+        chunksCreated: chunks.length,
       };
     } catch (error) {
-      logger.error('Document processing failed', { error, rfpId });
+      logger.error("Document processing failed", { error, rfpId });
       throw error;
     }
   }
+
+  // ---------------- HELPERS ----------------
 
   private async saveFile(file: Express.Multer.File): Promise<string> {
     const uploadDir = config.upload.uploadDir;
@@ -63,71 +75,42 @@ export class DocumentService {
     const filepath = path.join(uploadDir, filename);
 
     await fs.writeFile(filepath, file.buffer);
-
     return filepath;
   }
 
   private async extractText(file: Express.Multer.File): Promise<string> {
-    // Placeholder - integrate with PDF/DOCX parsing libraries
-    // Use libraries like pdf-parse, mammoth, or textract
-    const content = file.buffer.toString('utf-8');
-    return content;
-  }
+    if (file.mimetype === "application/pdf") {
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-  private chunkDocument(content: string): Array<{ section: string; content: string }> {
-    const sections = content.split(/\n\n+/);
-    const chunks: Array<{ section: string; content: string }> = [];
+      const loadingTask = pdfjs.getDocument({
+        data: new Uint8Array(file.buffer),
+      });
 
-    let currentSection = 'Introduction';
+      const pdf = await loadingTask.promise;
+      let fullText = "";
 
-    for (const section of sections) {
-      if (section.trim().length < 50) continue;
-
-      if (this.isSectionHeader(section)) {
-        currentSection = section.trim();
-        continue;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        fullText += content.items.map((i: any) => i.str).join(" ") + "\n\n";
       }
 
-      chunks.push({
-        section: currentSection,
-        content: section.trim(),
-      });
+      return fullText.trim();
     }
 
-    return chunks;
-  }
-
-  private isSectionHeader(text: string): boolean {
-    const headerPatterns = [
-      /^[A-Z\s]{3,}$/,
-      /^\d+\.\s+[A-Z]/,
-      /^SECTION\s+\d+/i,
-      /^PART\s+[A-Z]/i,
-    ];
-
-    return headerPatterns.some(pattern => pattern.test(text.trim()));
-  }
-
-  private detectSectionType(sectionName: string): RequirementCategory {
-    const lowerSection = sectionName.toLowerCase();
-
-    if (lowerSection.includes('technical') || lowerSection.includes('specification')) {
-      return RequirementCategory.TECHNICAL;
-    }
-    if (lowerSection.includes('test') || lowerSection.includes('quality')) {
-      return RequirementCategory.TESTING;
-    }
-    if (lowerSection.includes('compliance') || lowerSection.includes('certification')) {
-      return RequirementCategory.COMPLIANCE;
-    }
-    if (lowerSection.includes('commercial') || lowerSection.includes('price')) {
-      return RequirementCategory.COMMERCIAL;
-    }
-    if (lowerSection.includes('delivery') || lowerSection.includes('logistics')) {
-      return RequirementCategory.LOGISTICS;
+    if (
+      file.mimetype ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ) {
+      const result = await mammoth.extractRawText({ buffer: file.buffer });
+      return result.value.trim();
     }
 
-    return RequirementCategory.OTHER;
+    if (file.mimetype === "text/plain") {
+      return file.buffer.toString("utf-8").trim();
+    }
+
+    throw new Error("Unsupported document type");
   }
 }
 

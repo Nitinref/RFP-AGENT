@@ -11,4 +11,6 @@ export declare class RFPController {
     getTechnicalAnalysis(req: Request, res: Response): Promise<void>;
     getPricingAnalysis(req: Request, res: Response): Promise<void>;
     getResponse(req: Request, res: Response): Promise<void>;
+    getReport(req: Request, res: Response): Promise<void>;
+    downloadReportPDF(req: Request, res: Response): Promise<void>;
 }
