@@ -59,12 +59,12 @@ model RFP {
   pricingAnalyses   PricingAnalysis[]
   responses         RFPResponse[]
   documentChunks    RFPDocumentChunk[]
+  rfpreports        RFPReport[]
 
   @@index([status, priority])
   @@index([submissionDeadline])
   @@index([industry])
   @@index([receivedAt])
-  rfpreports RFPReport[]
 }
 
 model RFPRequirement {
@@ -135,14 +135,14 @@ model WorkflowRun {
   agentActivities AgentActivity[]
   modelDecisions  ModelDecision[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  rfpreports RFPReport[]
 
   @@unique([rfpId, runNumber])
   @@index([rfpId, status])
   @@index([triggerType])
   @@index([startedAt])
-  rfpreports RFPReport[]
 }
 
 model RFPDocumentChunk {
@@ -528,7 +528,7 @@ model User {
 }
 
 model RFPReport {
-  id            String   @id @default(cuid())
+  id String @id @default(cuid())
 
   rfpId         String
   workflowRunId String
@@ -558,6 +558,7 @@ enum RFPSource {
   UPLOAD
   API
   MANUAL
+  WEBSITE
 }
 
 enum Priority {
@@ -639,6 +640,10 @@ enum TriggerType {
   RETRY
   SCHEDULED
   API
+  DOCUMENT_UPLOAD
+  AUTO_WEBSITE_INGESTION
+  EMAIL_INGESTION
+  PORTAL_INGESTION
 }
 
 enum WorkflowStatus {

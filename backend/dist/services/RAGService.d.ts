@@ -1,6 +1,6 @@
 export declare class RAGService {
     embed(text: string): Promise<number[]>;
-    upsertRFPChunk({ id, vector, payload }: {
+    upsertRFPChunk({ id, vector, payload, }: {
         id: string;
         vector: number[];
         payload: {

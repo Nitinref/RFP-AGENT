@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { prisma } from "../prisma/index.js";
+import { generateMatchChart } from "../services/ChartService.js";
 
 export class RFPReportPDFService {
   async generatePDF(rfpId: string): Promise<Buffer> {
@@ -12,60 +13,136 @@ export class RFPReportPDFService {
       throw new Error("Report not found");
     }
 
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 50 });
+    return new Promise(async (resolve, reject) => {
+      const doc = new PDFDocument({
+        margin: 50,
+        size: "A4",
+      });
+
       const chunks: Buffer[] = [];
 
       doc.on("data", (chunk) => chunks.push(chunk));
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
-      /* ---------- TITLE ---------- */
-      doc.fontSize(20).text("RFP Report", { align: "center" });
-      doc.moveDown();
+      /* ================= HEADER ================= */
+      doc
+        .fontSize(22)
+        .font("Helvetica-Bold")
+        .text("RFP REPORT", { align: "center" });
 
-      /* ---------- SUMMARY ---------- */
-      doc.fontSize(14).text("Summary", { underline: true });
-      doc.moveDown(0.5);
-      doc.fontSize(11).text(report.summary ?? "—");
-      doc.moveDown();
+      doc
+        .moveDown(0.5)
+        .fontSize(10)
+        .font("Helvetica")
+        .fillColor("gray")
+        .text(`Generated on: ${new Date().toLocaleString()}`, {
+          align: "center",
+        })
+        .fillColor("black");
 
-      /* ---------- FINAL RESPONSE ---------- */
-      doc.fontSize(14).text("Final Proposal", { underline: true });
-      doc.moveDown(0.5);
-      doc.fontSize(11).text(report.finalResponse ?? "—");
-      doc.moveDown();
+      doc.moveDown(2);
 
-      /* ---------- TECHNICAL ANALYSIS ---------- */
-      doc.fontSize(14).text("Technical Analysis", { underline: true });
-      doc.moveDown(0.5);
+      /* ============ SECTION HELPER ============ */
+      const section = (title: string) => {
+        doc
+          .moveDown()
+          .font("Helvetica-Bold")
+          .fontSize(14)
+          .text(title, { underline: true })
+          .moveDown(0.5)
+          .font("Helvetica")
+          .fontSize(11);
+      };
+
+      /* ================= SUMMARY ================= */
+      section("Summary");
+      doc.text(report.summary ?? "—");
+
+      /* ================= FINAL RESPONSE ================= */
+      section("Final Proposal");
+      doc.text(report.finalResponse ?? "—");
+
+      /* ================= TECHNICAL ANALYSIS ================= */
+      section("Technical Analysis");
 
       const tech = report.technicalAnalysis as any;
-      tech?.topMatches?.forEach((m: any, i: number) => {
-        doc.fontSize(11).text(
-          `${i + 1}. ${m.sku} | Score: ${m.matchScore}% | Confidence: ${Math.round(
-            (m.confidence ?? 0) * 100
-          )}%`
-        );
 
-        if (m.risks?.length) {
-          doc.fontSize(10).text(`Risks: ${m.risks.join(", ")}`);
-        }
-        doc.moveDown(0.5);
-      });
+      if (tech?.topMatches?.length) {
+        tech.topMatches.forEach((m: any, i: number) => {
+          doc
+            .font("Helvetica-Bold")
+            .text(
+              `${i + 1}. ${m.sku}  (Score: ${m.matchScore}%, Confidence: ${Math.round(
+                (m.confidence ?? 0) * 100
+              )}%)`
+            )
+            .font("Helvetica");
 
-      /* ---------- PRICING ---------- */
-      doc.moveDown();
-      doc.fontSize(14).text("Pricing Summary", { underline: true });
-      doc.moveDown(0.5);
+          if (m.risks?.length) {
+            doc
+              .fontSize(10)
+              .fillColor("gray")
+              .text(`Risks: ${m.risks.join(", ")}`)
+              .fillColor("black");
+          }
+
+          doc.moveDown(0.5);
+        });
+      } else {
+        doc.text("No technical matches available.");
+      }
+
+      /* ================= CHART PAGE ================= */
+      if (tech?.topMatches?.length) {
+        doc.addPage();
+
+        doc
+          .fontSize(16)
+          .font("Helvetica-Bold")
+          .text("Match Score Comparison", { align: "center" });
+
+        doc.moveDown(1);
+
+        const chartBuffer = await generateMatchChart(tech.topMatches);
+
+        doc.image(chartBuffer, {
+          fit: [500, 260],
+          align: "center",
+        });
+      }
+
+      /* ================= PRICING ================= */
+      doc.addPage();
+      section("Pricing Summary");
 
       const pricing = report.pricingAnalysis as any;
-      doc.fontSize(11).text(
+
+      doc.text(
         `Total Bid Price: $${pricing?.pricing?.totalBidPrice ?? "N/A"}`
       );
       doc.text(`Competitiveness: ${pricing?.competitiveness ?? "N/A"}`);
 
-      doc.end(); // 🔥 MUST
+      /* ================= FOOTER ================= */
+      const footer = () => {
+        const pageNumber = (doc as any).page.pageNumber;
+
+        doc
+          .fontSize(9)
+          .fillColor("gray")
+          .text(
+            `Generated by RFP Automation Platform • Page ${pageNumber}`,
+            50,
+            doc.page.height - 40,
+            { align: "center" }
+          )
+          .fillColor("black");
+      };
+
+      footer();
+      doc.on("pageAdded", footer);
+
+      doc.end(); // 🔥 VERY IMPORTANT
     });
   }
 }

@@ -3,10 +3,24 @@ import config from './config/environment.js';
 import { logger } from './utils/logger.js';
 import { prisma } from './prisma/index.js';
 import authRoutes from './routes/auth.routes.js';
+import { EmailIngestionService } from "./services/EmailIngestionService.js";
+import { initQdrant } from "./vector/initQdrant.js";
 
 // Add with other routes (around line where other routes are)
 
 import cors from "cors"
+import { ProductIngestionService } from "./services/ProductIngestionService.js";
+
+const productService = new ProductIngestionService();
+await productService.ingestProducts();
+
+const gmailIngestion = new EmailIngestionService();
+
+// 🔥 run once on server start
+gmailIngestion.scanInbox().catch((err: any) => {
+  console.error("Gmail ingestion failed", err);
+});
+
 app.use(cors({
   origin: 'http://localhost:3001', // ✅ Frontend port 3001
   credentials: true
@@ -22,6 +36,7 @@ async function startServer() {
   try {
     await prisma.$connect();
     logger.info('Database connected successfully');
+    await initQdrant();
 
     const server = app.listen(config.port, () => {
       logger.info(`🚀 Server running on port ${config.port}`, {

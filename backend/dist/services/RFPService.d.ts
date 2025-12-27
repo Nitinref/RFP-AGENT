@@ -227,9 +227,9 @@ export declare class RFPService {
             id: string;
             createdAt: Date;
             rfpId: string;
-            content: string;
             sectionType: import(".prisma/client").$Enums.RequirementCategory | null;
             chunkIndex: number;
+            content: string;
             section: string | null;
             wordCount: number | null;
             embedding: import("@prisma/client/runtime/client.js").JsonValue | null;

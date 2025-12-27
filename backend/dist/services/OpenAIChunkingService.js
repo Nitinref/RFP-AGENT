@@ -1,20 +1,19 @@
 import OpenAI from "openai";
+import { safeJsonParse } from "../utils/safeJsonParse.js";
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 export async function openaiChunk(text) {
+    const safeText = text.slice(0, 6000);
     const prompt = `
-You are an expert RFP analyst.
-
-Split the following RFP text into meaningful chunks.
+Split the following RFP text into structured chunks.
 
 Rules:
 - One chunk = one requirement or section
 - Do NOT break sentences
 - Category must be one of: TECHNICAL, COMMERCIAL, LEGAL, OTHER
-- Return ONLY valid JSON
-- NO markdown
-- NO explanations
+- Output ONLY valid JSON array
+- No markdown, no explanations
 
 JSON format:
 [
@@ -26,16 +25,26 @@ JSON format:
 ]
 
 RFP TEXT:
-${text}
+${safeText}
 `;
     const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         temperature: 0,
-        messages: [{ role: "user", content: prompt }],
+        messages: [
+            {
+                role: "system",
+                content: "You are a strict JSON generator. Output valid JSON only. No extra text.",
+            },
+            { role: "user", content: prompt },
+        ],
     });
     const raw = response.choices[0].message.content;
     if (!raw)
         throw new Error("OpenAI returned empty response");
-    return JSON.parse(raw);
+    const parsed = safeJsonParse(raw);
+    if (!parsed || !Array.isArray(parsed)) {
+        throw new Error("Invalid JSON chunk response from OpenAI");
+    }
+    return parsed;
 }
 //# sourceMappingURL=OpenAIChunkingService.js.map

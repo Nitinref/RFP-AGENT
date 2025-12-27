@@ -9,6 +9,7 @@ const qdrant = new QdrantClient({
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
+
 export class RAGService {
 
   async embed(text: string): Promise<number[]> {
@@ -16,10 +17,17 @@ export class RAGService {
       model: 'text-embedding-3-small',
       input: text,
     });
-    return res.data[0].embedding;
+
+    const embedding = res.data[0].embedding;
+    console.log("🔢 Embedding size:", embedding.length); // should be 1536
+    return embedding;
   }
 
-  async upsertRFPChunk({ id, vector, payload }: {
+  async upsertRFPChunk({
+    id,
+    vector,
+    payload,
+  }: {
     id: string;
     vector: number[];
     payload: {
@@ -28,24 +36,41 @@ export class RAGService {
       chunkIndex: number;
     };
   }) {
-    await qdrant.upsert('rfp_chunks', {
-      points: [{ id, vector, payload }],
-    });
+    try {
+      await qdrant.upsert('rfp_chunks', {
+        wait: true, // 🔥 VERY IMPORTANT
+        points: [
+          {
+            id,
+            vector,
+            payload,
+          },
+        ],
+      });
+
+      console.log('✅ Qdrant upsert success:', id);
+    } catch (error) {
+      console.error('❌ Qdrant upsert failed:', error);
+      throw error;
+    }
   }
 
-  async searchRFPChunks(rfpId: string, query: string, limit = 8) {
-    const vector = await this.embed(query);
+ async searchRFPChunks(rfpId: string, query: string, limit = 8) {
+  const vector = await this.embed(query);
 
-    const result = await qdrant.search('rfp_chunks', {
-      vector,
-      limit,
-      filter: {
-        must: [{ key: 'rfpId', match: { value: rfpId } }],
-      },
-    });
+  const result = await qdrant.search('rfp_chunks', {
+    vector,
+    limit,
+    filter: {
+      must: [{ key: 'rfpId', match: { value: rfpId } }],
+    },
+  });
 
-    return result.map(r => r.id as string);
-  }
+  return result
+    .map(r => String(r.id)) // 🔥 FORCE string
+    .filter(Boolean);
+}
+
 }
 
 export const ragService = new RAGService();

@@ -41,8 +41,13 @@ export class TechnicalAgent extends BaseAgent {
                 throw new Error(`RFP ${input.context.rfpId} not found`);
             }
             const relevantChunkIds = await ragService.searchRFPChunks(input.context.rfpId, 'technical requirements and specifications');
+            if (!relevantChunkIds.length) {
+                throw new Error('No relevant RFP chunks found in vector DB');
+            }
             const relevantChunks = await prisma.rFPDocumentChunk.findMany({
-                where: { id: { in: relevantChunkIds } }
+                where: {
+                    id: { in: relevantChunkIds },
+                },
             });
             let requirements = rfp.requirements;
             if (requirements.length === 0) {

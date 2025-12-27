@@ -13,12 +13,28 @@ export class RAGService {
             model: 'text-embedding-3-small',
             input: text,
         });
-        return res.data[0].embedding;
+        const embedding = res.data[0].embedding;
+        console.log("🔢 Embedding size:", embedding.length); // should be 1536
+        return embedding;
     }
-    async upsertRFPChunk({ id, vector, payload }) {
-        await qdrant.upsert('rfp_chunks', {
-            points: [{ id, vector, payload }],
-        });
+    async upsertRFPChunk({ id, vector, payload, }) {
+        try {
+            await qdrant.upsert('rfp_chunks', {
+                wait: true, // 🔥 VERY IMPORTANT
+                points: [
+                    {
+                        id,
+                        vector,
+                        payload,
+                    },
+                ],
+            });
+            console.log('✅ Qdrant upsert success:', id);
+        }
+        catch (error) {
+            console.error('❌ Qdrant upsert failed:', error);
+            throw error;
+        }
     }
     async searchRFPChunks(rfpId, query, limit = 8) {
         const vector = await this.embed(query);
@@ -29,7 +45,9 @@ export class RAGService {
                 must: [{ key: 'rfpId', match: { value: rfpId } }],
             },
         });
-        return result.map(r => r.id);
+        return result
+            .map(r => String(r.id)) // 🔥 FORCE string
+            .filter(Boolean);
     }
 }
 export const ragService = new RAGService();

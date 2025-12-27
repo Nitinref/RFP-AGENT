@@ -6,33 +6,56 @@ import config from "../config/environment.js";
 import { sanitizeFilename, generateUniqueId } from "../utils/helpers.js";
 import mammoth from "mammoth";
 import { openaiChunk } from "./OpenAIChunkingService.js";
-// silence pdfjs font warning
+import { ragService } from "../services/RAGService.js";
 process.env.PDFJS_DISABLE_FONT_FACE = "true";
 export class DocumentService {
     async processDocument(rfpId, file) {
-        logger.info("Processing document", { rfpId, filename: file.originalname });
+        logger.info("📄 Processing document", {
+            rfpId,
+            filename: file.originalname,
+        });
         try {
-            // 1️⃣ Save file
+            /* 1️⃣ Save file */
             const savedPath = await this.saveFile(file);
-            // 2️⃣ Extract text
+            /* 2️⃣ Extract text */
             const text = await this.extractText(file);
-            // 3️⃣ ✅ OpenAI semantic chunking
+            if (!text || text.length < 50) {
+                throw new Error("Extracted text is empty or too small");
+            }
+            /* 3️⃣ Semantic chunking */
             const chunks = await openaiChunk(text);
-            if (!chunks.length) {
+            if (!chunks?.length) {
                 throw new Error("No chunks returned by OpenAI");
             }
-            // 4️⃣ Save chunks
+            /* 4️⃣ Save chunks to DB */
             await prisma.rFPDocumentChunk.createMany({
                 data: chunks.map((chunk, index) => ({
                     rfpId,
                     chunkIndex: index,
                     section: chunk.title,
-                    sectionType: chunk.category.toUpperCase(),
+                    sectionType: chunk.category,
                     content: chunk.content,
                     wordCount: chunk.content.split(/\s+/).length,
                 })),
             });
-            // 5️⃣ Update RFP
+            /* 4️⃣.5️⃣ Embed + store in Qdrant (PARALLEL, SAFE) */
+            await Promise.all(chunks.map(async (chunk, index) => {
+                const embedding = await ragService.embed(chunk.content);
+                await ragService.upsertRFPChunk({
+                    id: `${rfpId}-${index}`,
+                    vector: embedding,
+                    payload: {
+                        rfpId,
+                        sectionType: chunk.category,
+                        chunkIndex: index,
+                    },
+                });
+                logger.info("🧠 Chunk embedded", {
+                    rfpId,
+                    chunkIndex: index,
+                });
+            }));
+            /* 5️⃣ Update RFP status */
             await prisma.rFP.update({
                 where: { id: rfpId },
                 data: {
@@ -40,7 +63,7 @@ export class DocumentService {
                     status: "ANALYZING",
                 },
             });
-            logger.info("Document processed successfully", {
+            logger.info("✅ Document fully processed", {
                 rfpId,
                 chunksCreated: chunks.length,
             });
@@ -50,11 +73,14 @@ export class DocumentService {
             };
         }
         catch (error) {
-            logger.error("Document processing failed", { error, rfpId });
+            logger.error("❌ Document processing failed", {
+                rfpId,
+                error,
+            });
             throw error;
         }
     }
-    // ---------------- HELPERS ----------------
+    /* ================= HELPERS ================= */
     async saveFile(file) {
         const uploadDir = config.upload.uploadDir;
         await fs.mkdir(uploadDir, { recursive: true });
@@ -86,7 +112,7 @@ export class DocumentService {
         if (file.mimetype === "text/plain") {
             return file.buffer.toString("utf-8").trim();
         }
-        throw new Error("Unsupported document type");
+        throw new Error(`Unsupported document type: ${file.mimetype}`);
     }
 }
 export default DocumentService;
